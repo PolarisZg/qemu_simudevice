@@ -178,7 +178,7 @@ static void testDevPci_realize(struct PCIDevice *pci_dev, struct Error **errp)
     pci_config_set_interrupt_pin(pci_dev->config, 1);
 
     // msi interrupt
-    if (msi_init(pci_dev, 0, 1, true, false, errp))
+    if (msi_init(pci_dev, 0, 1, false, false, errp))
     {
         printf("test pci : msi interrupt malloc falut \n");
     }

@@ -46,6 +46,9 @@ source vfio/Kconfig
 source xen/Kconfig
 source watchdog/Kconfig
 
+# Polaris device
+source polarissimu/Kconfig
+
 # arch Kconfig
 source arm/Kconfig
 source alpha/Kconfig

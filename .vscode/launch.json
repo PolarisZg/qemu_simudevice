@@ -1,0 +1,41 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceRoot}/bulid/qemu-system-riscv64",
+            "args": [
+                "-machine", "virt", 
+                "-nographic", "-m", "2048", 
+                "-smp", "4",
+                "-drive", "file=/home/yukikaze/code/wireless_driver_simulation/script/ubuntu-24.04-preinstalled-server-riscv64.img,format=raw,if=virtio",
+                "-kernel", "./uboot.elf",
+                "-device", "virtio-net-device,netdev=eth0",
+                "-netdev", "tap,id=eth0",
+                "-device", "virtio-rng-pci",
+                "-device", "hellodev-pci",
+                "-device", "edu",
+            ],
+            "stopAtEntry": true,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "%PATH%;\bin",
+                }
+            ],
+            "MIMode": "gdb",
+            "miDebuggerArgs": "-q -ex quit; wait() { fg >/dev/null; }; /bin/gdb -q --interpreter=mi",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+        }
+    ],
+}

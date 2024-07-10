@@ -1,7 +1,7 @@
 {
     "C_Cpp.errorSquiggles": "disabled",
-    "files.associations": {
-        "pci.h": "c",
-        "error.h": "c"
-    }
+    // "files.associations": {
+    //     "pci.h": "c",
+    //     "error.h": "c"
+    // }
 }

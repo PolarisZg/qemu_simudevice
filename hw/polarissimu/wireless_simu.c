@@ -488,7 +488,7 @@ static void Wireless_realize(struct PCIDevice *pdev, struct Error **errp)
 
     // mmio 最后的数字的作用是限制写入的大小，往大了写就行
     memory_region_init_io(&wd->mmio, OBJECT(wd),
-                          &Wireless_mmio_ops, pdev, "polariswireless-mmio", UINT64_MAX);
+                          &Wireless_mmio_ops, pdev, "polariswireless-mmio", 4096);
     pci_register_bar(pdev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY, &wd->mmio);
 }
 

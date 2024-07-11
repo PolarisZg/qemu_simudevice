@@ -19,6 +19,10 @@
 
 #define WIRELESS_REG_TEST 0x00
 #define WIRELESS_REG_EVENT 0x01
+// this device only can read data from memory
+#define WIRELESS_REG_DMA_HOSTADDR 0x02
+#define WIRELESS_REG_DMA_LENGTH 0x03
+#define WIRELESS_REG_DMA_START 0x04
 
 /*
  * @brief 真实存放数据的Node
@@ -439,6 +443,26 @@ static void Wireless_write(void *opaque, hwaddr addr, u_int64_t data, unsigned s
         break;
     case WIRELESS_REG_EVENT:
         Wireless_Add_Task(wd, val);
+        break;
+    case WIRELESS_REG_DMA_HOSTADDR: 
+        /*
+        * now this dma can only process one data ;
+        * the next mast wait for the pre one
+        * otherwise the dma processor will read wrong memory address or wrong memory length
+        * if want dont read , must realize tx ring or tx array to save the data waitting dma processor
+        * */
+        wd->wireless_data_detail.host_addr = val;
+        break;
+    case WIRELESS_REG_DMA_LENGTH:
+        wd->wireless_data_detail.data_length = val;
+        break;
+    case WIRELESS_REG_DMA_START:
+        wd->wireless_data_detail.DMA_derection = DMA_MEMORY_TO_DEVICE;
+        if (wd->wireless_data_detail.host_addr == 0 || wd->wireless_data_detail.data_length == 0)
+        {
+            break;
+        }
+        Wireless_Add_Task(wd, WIRELESS_EVENT_DMA);
         break;
     default:
         printf("%s : write err no reg %lu \n", WIRELESS_DEVICE_NAME, addr);

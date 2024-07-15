@@ -18,11 +18,11 @@
 #define WIRELESS_FLAG_DMA_NODE_ISUSING_BIT 0
 
 #define WIRELESS_REG_TEST 0x00
-#define WIRELESS_REG_EVENT 0x01
-// this device only can read data from memory
-#define WIRELESS_REG_DMA_HOSTADDR 0x02
-#define WIRELESS_REG_DMA_LENGTH 0x03
-#define WIRELESS_REG_DMA_START 0x04
+#define WIRELESS_REG_EVENT 0x10
+#define WIRELESS_REG_DMA_HOSTADDR 0x20
+#define WIRELESS_REG_DMA_LENGTH 0x30
+#define WIRELESS_REG_HOST_BUFF_ID 0x40
+#define WIRELESS_REG_IRQ_STATUS 0x50
 
 /*
  * @brief 真实存放数据的Node
@@ -69,6 +69,7 @@ struct Wireless_Data_Detail
     u_int64_t host_addr;
     enum Wireless_DMA_Direction DMA_derection;
     u_int32_t data_length;
+    u_int32_t host_buffer_id;
     u_int32_t dma_node_id;
     u_int32_t flag;
 };
@@ -81,6 +82,13 @@ enum Wireless_LongTimeEvent
     WIRELESS_EVENT_TEST,
 };
 
+enum Wireless_DMA_IRQ_STATUS 
+{
+    WIRELESS_IRQ_TEST = 0,
+    WIRELESS_IRQ_DNA_MEM_TO_DEVICE_END,
+    WIRELESS_IRQ_DMA_DELALL_END,
+    WIRELESS_IRQ_RX_START,
+};
 // wireless 设备非静态成员
 struct WirelessDeviceState
 {
@@ -93,7 +101,7 @@ struct WirelessDeviceState
     u_int64_t dma_mask;
     u_int32_t irq_status;
     struct QemuMutex irq_intx_mutex;
-    u_int32_t irq_message;
+    // u_int32_t irq_message;
     QEMUTimer irq_timer;
 
     // dma
@@ -157,6 +165,7 @@ static int Wireless_dma_del_node(struct WirelessDeviceState *wd, struct Wireless
         free(next);
         return 0;
     }
+    printf("%s : del node success \n", WIRELESS_DEVICE_NAME);
 }
 
 /*
@@ -168,7 +177,7 @@ static int Wireless_dma_del_node(struct WirelessDeviceState *wd, struct Wireless
 static int Wireless_dma_read_from_mem(struct WirelessDeviceState *wd)
 {
     struct Wireless_Data_Detail *data = &wd->wireless_data_detail;
-    printf("%s : wirte data to dma : host addr %08lx data length %08x \n derection %d",
+    printf("%s : wirte data to dma : host addr %08lx data length %08x \n derection %d \n",
            WIRELESS_DEVICE_NAME, data->host_addr, data->data_length, data->DMA_derection);
     if (data->DMA_derection != DMA_MEMORY_TO_DEVICE)
     {
@@ -216,10 +225,12 @@ static int Wireless_dma_read_from_mem(struct WirelessDeviceState *wd)
 
 static int Wireless_dma_del_all(struct WirelessDeviceState *wd)
 {
+    printf("%s : cleam dma list \n", WIRELESS_DEVICE_NAME);
     struct Wireless_DMA_Detail *dma_detail = &wd->wireless_dma_detail;
     while (dma_detail->dma_node_list != NULL && dma_detail->dma_node_list != dma_detail->dma_node_tail)
     {
         Wireless_dma_del_node(wd, dma_detail->dma_node_list->next);
+        printf("%s : dma clear : dma length : %ld \n", WIRELESS_DEVICE_NAME ,dma_detail->dma_max_mem_size);
     }
     return 0;
 }
@@ -360,6 +371,7 @@ static void Wireless_LongTime_Handler(void *opaque)
         if (wd->wireless_data_detail.DMA_derection == DMA_MEMORY_TO_DEVICE)
         {
             Wireless_dma_read_from_mem(wd);
+            wd->irq_status = WIRELESS_IRQ_DNA_MEM_TO_DEVICE_END;
         }
         else if (wd->wireless_data_detail.DMA_derection == DMA_DEVICE_TO_MEMORY)
         {
@@ -368,9 +380,11 @@ static void Wireless_LongTime_Handler(void *opaque)
         break;
     case WIRELESS_EVENT_CLEAN_DMA:
         Wireless_dma_del_all(wd);
+        wd->irq_status = WIRELESS_IRQ_DMA_DELALL_END;
         break;
     case WIRELESS_EVENT_TEST:
         sleep(10);
+        wd->irq_status = WIRELESS_IRQ_TEST;
         break;
     case WIRELESS_EVENT_NOEVENT:
         Wireless_Interrup_lower(wd);
@@ -389,7 +403,7 @@ static void Wireless_Add_Task(struct WirelessDeviceState *wd, u_int32_t val)
         printf("%s : clean irq \n", WIRELESS_DEVICE_NAME);
     }
     else
-    {
+    {   
         timer_mod(&wd->irq_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 100);
     }
 }
@@ -402,14 +416,26 @@ static void Wireless_Add_Task(struct WirelessDeviceState *wd, u_int32_t val)
  */
 static u_int64_t Wireless_read(void *opaque, hwaddr addr, unsigned size)
 {
-    printf("%s : read : %p : %lu : %u \n", WIRELESS_DEVICE_NAME, opaque, addr, size);
-    // struct WirelessDeviceState *wd = opaque;
+    printf("%s : read reg : %lx size %u \n", WIRELESS_DEVICE_NAME, addr, size);
+    struct WirelessDeviceState *wd = opaque;
     u_int64_t val = 0LL;
 
     switch (addr)
     {
     case WIRELESS_REG_TEST:
         val = 0x114514;
+        break;
+    case WIRELESS_REG_DMA_HOSTADDR:
+        val = wd->wireless_data_detail.host_addr;
+        break;
+    case WIRELESS_REG_DMA_LENGTH:
+        val = wd->wireless_data_detail.data_length;
+        break;
+    case WIRELESS_REG_HOST_BUFF_ID:
+        val = wd->wireless_data_detail.host_buffer_id;
+        break;
+    case WIRELESS_REG_IRQ_STATUS:
+        val = wd->irq_status;
         break;
     default:
         printf("%s : read err no reg %lu \n", WIRELESS_DEVICE_NAME, addr);
@@ -427,7 +453,7 @@ static u_int64_t Wireless_read(void *opaque, hwaddr addr, unsigned size)
  */
 static void Wireless_write(void *opaque, hwaddr addr, u_int64_t data, unsigned size)
 {
-    printf("%s : write data : %p : %lu : %lu : %u \n", WIRELESS_DEVICE_NAME, opaque, addr, data, size);
+    printf("%s : write reg %lx data %lx size %u \n", WIRELESS_DEVICE_NAME, addr, data, size);
     if (size != 4)
     {
         printf("%s : size err \n", WIRELESS_DEVICE_NAME);
@@ -452,17 +478,13 @@ static void Wireless_write(void *opaque, hwaddr addr, u_int64_t data, unsigned s
         * if want dont read , must realize tx ring or tx array to save the data waitting dma processor
         * */
         wd->wireless_data_detail.host_addr = val;
+        wd->wireless_data_detail.DMA_derection = DMA_MEMORY_TO_DEVICE;
         break;
     case WIRELESS_REG_DMA_LENGTH:
         wd->wireless_data_detail.data_length = val;
         break;
-    case WIRELESS_REG_DMA_START:
-        wd->wireless_data_detail.DMA_derection = DMA_MEMORY_TO_DEVICE;
-        if (wd->wireless_data_detail.host_addr == 0 || wd->wireless_data_detail.data_length == 0)
-        {
-            break;
-        }
-        Wireless_Add_Task(wd, WIRELESS_EVENT_DMA);
+    case WIRELESS_REG_HOST_BUFF_ID:
+        wd->wireless_data_detail.host_buffer_id = val;
         break;
     default:
         printf("%s : write err no reg %lu \n", WIRELESS_DEVICE_NAME, addr);
@@ -535,7 +557,7 @@ static void Wireless_instance_init(struct Object *obj)
 {
     struct WirelessDeviceState *wd = WIRELESS_DEVICE_OBJ(obj);
     wd->dma_mask = (1UL << 32) - 1;
-    wd->irq_message = 0;
+    // wd->irq_message = 0;
     wd->irq_status = 0;
     wd->long_time_event = WIRELESS_EVENT_NOEVENT;
     struct Wireless_DMA_Detail *dma_detail = &wd->wireless_dma_detail;

@@ -18,6 +18,7 @@
 #define WIRELESS_FLAG_DMA_NODE_ISUSING_BIT 0
 
 #define WIRELESS_TX_RING_SIZE 10
+#define WIRELESS_RX_RING_SIZE 2
 
 #define WIRELESS_REG_TEST 0x00
 #define WIRELESS_REG_EVENT 0x10
@@ -30,6 +31,10 @@
 #define WIRELESS_REG_DMA_OUT_LENGTH 0x70
 #define WIRELESS_REG_DMA_OUT_BUFF_ID 0x80
 #define WIRELESS_REG_DMA_OUT_FLAG 0x90
+#define WIRELESS_REG_DMA_RX_RING_BUF_ID 0xB0
+#define WIRELESS_REG_DMA_RX_RING_HOSTADDR 0xC0
+#define WIRELESS_REG_DMA_RX_RING_LENGTH 0xD0
+#define WIRELESS_REG_DMA_RX_RING_FLAG 0xE0
 
 /*
  * @brief 真实存放数据的Node
@@ -95,6 +100,7 @@ enum Wireless_DMA_IRQ_STATUS
     WIRELESS_IRQ_DNA_MEM_TO_DEVICE_END,
     WIRELESS_IRQ_DMA_DELALL_END,
     WIRELESS_IRQ_RX_START,
+    WIRELESS_IRQ_DMA_DEVICE_TO_MEM_END,
 };
 // wireless 设备非静态成员
 struct WirelessDeviceState
@@ -115,7 +121,9 @@ struct WirelessDeviceState
     struct Wireless_DMA_Detail wireless_dma_detail;
     struct QemuMutex dma_access_mutex;
     struct Wireless_Data_Detail tx_ring_buf[WIRELESS_TX_RING_SIZE];
+    struct Wireless_Data_Detail rx_ring_buf[WIRELESS_RX_RING_SIZE];
     struct Wireless_Data_Detail *wireless_data_detail;
+    struct Wireless_Data_Detail *wireless_data_rx_detail;
     struct QemuMutex dma_out_mutex;
     struct Wireless_Data_Detail *wireless_dma_out_detail;
     struct QemuThread dma_clean_thread;
@@ -249,7 +257,7 @@ static int Wireless_dma_del_all(struct WirelessDeviceState *wd)
 /*
  * 向内存写
  *
- * 必须提供一个host内存地址，以及需要读取的dma node的id
+ * 在data中必须提供一个host内存地址，以及需要读取的dma node的id
  * @DMA_derection DMA_DEVICE_TO_MEMORY
  */
 static int Wireless_dma_read_from_device(struct WirelessDeviceState *wd, struct Wireless_Data_Detail *data)
@@ -288,7 +296,7 @@ static int Wireless_dma_read_from_device(struct WirelessDeviceState *wd, struct 
         printf("%s : wirte data to mem : read from device err \n", WIRELESS_DEVICE_NAME);
         return -2;
     }
-    data->data_length = dma_node->data_length;
+    // data->data_length = dma_node->data_length;
     return 0;
 }
 
@@ -319,7 +327,6 @@ static void Wireless_Interrup_lower(struct WirelessDeviceState *wd)
     if (!msi_enabled(&wd->parent_obj))
     {
         pci_set_irq(&wd->parent_obj, 0);
-
     }
     wd->irq_status = 0;
     qemu_mutex_unlock(&wd->irq_intx_mutex);
@@ -330,60 +337,44 @@ static void Wireless_Interrup_lower(struct WirelessDeviceState *wd)
  *
  * 此函数涉及到敏感的删除操作，需要防止出现悬空指针
  */
-static void *Wireless_dma_mem_manager(void *opaque)
-{
-    printf("%s : dma clean start \n", WIRELESS_DEVICE_NAME);
-    struct WirelessDeviceState *wd = opaque;
-    struct Wireless_DMA_Detail *dma_detail = &wd->wireless_dma_detail;
-    while (1)
-    {
-        if (wd->stop)
-        {
-            goto stop;
-        }
-        qemu_mutex_lock(&wd->dma_access_mutex);
-        if (dma_detail->dma_data_length > dma_detail->dma_max_mem_size)
-        {
-            if (dma_detail->dma_node_list == NULL || dma_detail->dma_node_list == dma_detail->dma_node_tail)
-            {
-                goto stop;
-            }
-            for (struct Wireless_DMA_Node *node = dma_detail->dma_node_list; node != NULL; node = node->next)
-            {
-                /*
-                 * 一些对node的判断，对于某些flag的node不能随意删除，比如正在写入到内存的
-                 */
-                if (node->data_length > 0 && WIRELESS_CHECK_WORD_FLAG(node->flag, WIRELESS_FLAG_DMA_NODE_ISUSING_BIT))
-                {
-                    Wireless_dma_del_node(wd, node);
-                    break;
-                }
-            }
-        }
-        qemu_mutex_unlock(&wd->dma_access_mutex);
-    }
-
-stop:
-    printf("%s : dma clean stop \n", WIRELESS_DEVICE_NAME);
-    qemu_mutex_unlock(&wd->dma_access_mutex);
-    return NULL;
-}
-
-/*
- * 测试dma用例，每隔20s将一个写入到device的数据写回memory
- * 暂时还没写出来device到mem的部分
- */
-// static void *Wireless_dma_test(void *opaque)
+// static void *Wireless_dma_mem_manager(void *opaque)
 // {
-//     printf("%s : dma test start \n", WIRELESS_DEVICE_NAME);
+//     printf("%s : dma clean start \n", WIRELESS_DEVICE_NAME);
 //     struct WirelessDeviceState *wd = opaque;
+//     // struct Wireless_DMA_Detail *dma_detail = &wd->wireless_dma_detail;
+//     // while (1)
+//     // {
+//     //     if (wd->stop)
+//     //     {
+//     //         goto stop;
+//     //     }
+//     //     qemu_mutex_lock(&wd->dma_access_mutex);
+//     //     if (dma_detail->dma_data_length > dma_detail->dma_max_mem_size)
+//     //     {
+//     //         if (dma_detail->dma_node_list == NULL || dma_detail->dma_node_list == dma_detail->dma_node_tail)
+//     //         {
+//     //             goto stop;
+//     //         }
+//     //         for (struct Wireless_DMA_Node *node = dma_detail->dma_node_list; node != NULL; node = node->next)
+//     //         {
+//     //             /*
+//     //              * 一些对node的判断，对于某些flag的node不能随意删除，比如正在写入到内存的
+//     //              */
+//     //             if (node->data_length > 0 && WIRELESS_CHECK_WORD_FLAG(node->flag, WIRELESS_FLAG_DMA_NODE_ISUSING_BIT))
+//     //             {
+//     //                 Wireless_dma_del_node(wd, node);
+//     //                 break;
+//     //             }
+//     //         }
+//     //     }
+//     //     qemu_mutex_unlock(&wd->dma_access_mutex);
+//     //     sleep(20);
+//     // }
 
-//     while (1)
-//     {
-//         if (wd->stop)
-//             break;
-//         sleep(20);
-//     }
+//     // stop:
+//     printf("%s : dma clean stop \n", WIRELESS_DEVICE_NAME);
+//     qemu_mutex_unlock(&wd->dma_access_mutex);
+//     return NULL;
 // }
 
 /*
@@ -404,18 +395,28 @@ static void Wireless_DMA_Process(struct WirelessDeviceState *wd)
         if (data_detail->flag & 1)
         {
             sleep(10); // 拉长dma时间便于调试
-            if (data_detail->DMA_derection == DMA_MEMORY_TO_DEVICE)
-            {
-                Wireless_dma_read_from_mem(wd, data_detail);
-            }
-            else
-            {
-                Wireless_dma_read_from_device(wd, data_detail);
-            }
+            Wireless_dma_read_from_mem(wd, data_detail);
             data_detail->flag &= ~(1U);
             qemu_mutex_lock(&wd->dma_out_mutex);
             wd->wireless_dma_out_detail = &wd->tx_ring_buf[i];
             Wireless_Interrupt_raise(wd, WIRELESS_IRQ_DNA_MEM_TO_DEVICE_END);
+        }
+    }
+    qemu_mutex_unlock(&wd->dma_access_mutex);
+
+    qemu_mutex_lock(&wd->dma_access_mutex);
+    for (int i = 0; i < WIRELESS_RX_RING_SIZE; i++)
+    {
+        struct Wireless_Data_Detail *data_detail = &wd->rx_ring_buf[i];
+        if (data_detail->flag & 1)
+        {
+            sleep(10); // 拉长dma时间便于调试
+
+            Wireless_dma_read_from_device(wd, data_detail);
+            data_detail->flag &= ~(1U);
+            qemu_mutex_lock(&wd->dma_out_mutex);
+            wd->wireless_dma_out_detail = data_detail;
+            Wireless_Interrupt_raise(wd, WIRELESS_IRQ_DMA_DEVICE_TO_MEM_END);
         }
     }
     qemu_mutex_unlock(&wd->dma_access_mutex);
@@ -458,6 +459,48 @@ static void Wireless_Add_Task(struct WirelessDeviceState *wd, u_int32_t val)
         return;
     }
     timer_mod(&wd->irq_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 100);
+}
+
+/*
+ * 测试dma，每隔20s将写入到device的数据写回memory
+ * 暂时还没写出来device到mem的部分
+ */
+static void *Wireless_dma_test(void *opaque)
+{
+    printf("%s : dma test start \n", WIRELESS_DEVICE_NAME);
+    struct WirelessDeviceState *wd = opaque;
+
+    while (1)
+    {
+        if (wd->stop)
+            break;
+        sleep(20);
+        struct Wireless_DMA_Node *node = NULL;
+        struct Wireless_DMA_Detail *dma_detail = &wd->wireless_dma_detail;
+        for (node = dma_detail->dma_node_list; node != NULL; node = node->next)
+        {
+            if (node->data_length > 0)
+            {
+                int i = 0;
+                for (; i < WIRELESS_RX_RING_SIZE; i++)
+                {
+                    if (wd->rx_ring_buf[i].host_addr != 0 && node->data_length >= wd->rx_ring_buf[i].data_length && wd->rx_ring_buf[i].flag && 1 == 0)
+                    {
+                        break;
+                    }
+                }
+                if (i == WIRELESS_RX_RING_SIZE)
+                {
+                    continue;
+                }
+                wd->rx_ring_buf[i].flag |= 1;
+                wd->rx_ring_buf[i].dma_node_id = node->node_id;
+                Wireless_Add_Task(wd, WIRELESS_EVENT_DMA);
+            }
+        }
+    }
+
+    return NULL;
 }
 
 /*
@@ -599,6 +642,41 @@ static void Wireless_write(void *opaque, hwaddr addr, u_int64_t data, unsigned s
     case WIRELESS_REG_DMA_IN_BUFF_ID:
         wd->wireless_data_detail = &wd->tx_ring_buf[val];
         wd->wireless_data_detail->host_buffer_id = val;
+        wd->wireless_data_detail->DMA_derection = DMA_MEMORY_TO_DEVICE;
+        break;
+    case WIRELESS_REG_DMA_RX_RING_BUF_ID:
+        if (val >= WIRELESS_RX_RING_SIZE)
+        {
+            printf("%s : rx ring init err id BIG \n", WIRELESS_DEVICE_NAME);
+            break;
+        }
+        wd->wireless_data_rx_detail = &wd->rx_ring_buf[val];
+        wd->wireless_data_rx_detail->host_buffer_id = val;
+        wd->wireless_data_rx_detail->DMA_derection = DMA_DEVICE_TO_MEMORY;
+        break;
+    case WIRELESS_REG_DMA_RX_RING_HOSTADDR:
+        if (wd->wireless_data_rx_detail == NULL)
+        {
+            printf("%s : rx ring init id NULL \n", WIRELESS_DEVICE_NAME);
+            break;
+        }
+        wd->wireless_data_rx_detail->host_addr = val;
+        break;
+    case WIRELESS_REG_DMA_RX_RING_FLAG:
+        if (wd->wireless_data_rx_detail == NULL)
+        {
+            printf("%s : rx ring init id NULL \n", WIRELESS_DEVICE_NAME);
+            break;
+        }
+        wd->wireless_data_rx_detail->flag = val;
+        break;
+    case WIRELESS_REG_DMA_RX_RING_LENGTH:
+        if (wd->wireless_data_rx_detail == NULL)
+        {
+            printf("%s : rx ring init id NULL \n", WIRELESS_DEVICE_NAME);
+            break;
+        }
+        wd->wireless_data_rx_detail->data_length = val;
         break;
     default:
         printf("%s : write err no reg %lu \n", WIRELESS_DEVICE_NAME, addr);
@@ -643,9 +721,9 @@ static void Wireless_realize(struct PCIDevice *pdev, struct Error **errp)
     qemu_mutex_init(&wd->irq_intx_mutex);
     qemu_mutex_init(&wd->dma_out_mutex);
 
-    // dma 清理线程
+    // dma 测试
     qemu_thread_create(&wd->dma_clean_thread, "polariswireless-dmaclean",
-                       Wireless_dma_mem_manager, wd, QEMU_THREAD_JOINABLE);
+                       Wireless_dma_test, wd, QEMU_THREAD_JOINABLE);
 
     // mmio 最后的数字的作用是限制写入的大小，往大了写就行
     memory_region_init_io(&wd->mmio, OBJECT(wd),

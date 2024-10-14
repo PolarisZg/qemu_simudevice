@@ -1,0 +1,4 @@
+config WIRELESS_SIMU 
+    bool
+    default y if PCI_DEVICES
+    depends on PCI

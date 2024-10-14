@@ -47,7 +47,8 @@ source xen/Kconfig
 source watchdog/Kconfig
 
 # Polaris device
-source polarissimu/Kconfig
+# source polarissimu/Kconfig
+source wireless_simu/Kconfig
 
 # arch Kconfig
 source arm/Kconfig

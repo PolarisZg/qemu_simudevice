@@ -2,7 +2,7 @@
 
 static void wireless_simu_mmio_write(void *opaque, hwaddr addr, u_int64_t val, unsigned size)
 {
-    printf("%s : %lx reg %u size %lx data \n", WIRELESS_SIMU_DEVICE_NAME, addr, size, val);
+    printf("%s : %016lx reg %u size %lx data \n", WIRELESS_SIMU_DEVICE_NAME, addr, size, val);
 }
 
 static u_int64_t wireless_simu_mmio_read(void *opaque, hwaddr addr, unsigned size)
@@ -17,25 +17,36 @@ static const struct MemoryRegionOps wireless_simu_mmio_ops = {
 
 static void wireless_simu_realize(struct PCIDevice *pci_dev, struct Error **errp)
 {
-    struct wireless_simu_device_state *wd = WIRELESS_SIMU_OBJ_GET_CLASS(pci_dev);
-    
+    struct wireless_simu_device_state *wd = WIRELESS_SIMU_OBJ(pci_dev);
+
+    /* irq */
+    pci_config_set_interrupt_pin(pci_dev->config, 1);
+
+    if (msi_init(pci_dev, 0, 1, false, false, errp))
+    {
+        printf("%s : msi irq false \n", WIRELESS_SIMU_DEVICE_NAME);
+    }
+
     /* mmio reg 初始化 */
     memory_region_init_io(&wd->mmio,
                           OBJECT(wd),
                           &wireless_simu_mmio_ops,
                           pci_dev,
                           "wireless_simu_mmio",
-                          4096);
+                          (1 << 30));
+
+    pci_register_bar(pci_dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY, &wd->mmio);
 }
 
 static void wireless_simu_exit(struct PCIDevice *pci_dev)
 {
-    struct wireless_simu_device_state *wd = WIRELESS_SIMU_OBJ_GET_CLASS(pci_dev);
+    struct wireless_simu_device_state *wd = WIRELESS_SIMU_OBJ(pci_dev);
     wd->dma_mask = 0;
 }
 
 static void wireless_simu_class_init(struct ObjectClass *class, void *data)
 {
+    printf("%s : class init start \n", WIRELESS_SIMU_DEVICE_NAME);
     struct DeviceClass *dc = DEVICE_CLASS(class);
     struct PCIDeviceClass *pci = PCI_DEVICE_CLASS(class);
 
@@ -48,12 +59,15 @@ static void wireless_simu_class_init(struct ObjectClass *class, void *data)
 
     dc->desc = "wireless simu qemu device";
     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
+    printf("%s : class init end \n", WIRELESS_SIMU_DEVICE_NAME);
 }
 
 static void wireless_simu_instance_init(struct Object *obj)
 {
-    struct wireless_simu_device_state *wd = WIRELESS_SIMU_OBJ_GET_CLASS(obj);
+    printf("%s : intance start \n", WIRELESS_SIMU_DEVICE_NAME);
+    struct wireless_simu_device_state *wd = WIRELESS_SIMU_OBJ(obj);
     wd->dma_mask = (1UL << WIRELESS_SIMU_DEVICE_DMA_MASK) - 1;
+    printf("%s : intance end \n", WIRELESS_SIMU_DEVICE_NAME);
 }
 
 static const struct TypeInfo wireless_simu_type_info = {
@@ -70,7 +84,7 @@ static const struct TypeInfo wireless_simu_type_info = {
 
 static void wireless_simu_register_types(void)
 {
-    printf("%s : wireless_simu register start \n", WIRELESS_SIMU_DEVICE_NAME);
+    printf("%s : register start \n", WIRELESS_SIMU_DEVICE_NAME);
     type_register_static(&wireless_simu_type_info);
 }
 

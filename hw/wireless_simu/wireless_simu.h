@@ -28,7 +28,7 @@ struct wireless_simu_device_state
     u_int64_t dma_mask;
 };
 
-DECLARE_CLASS_CHECKERS(struct wireless_simu_device_state,
+DECLARE_INSTANCE_CHECKER(struct wireless_simu_device_state,
                        WIRELESS_SIMU_OBJ,
                        WIRELESS_SIMU_DEVICE_NAME);
 

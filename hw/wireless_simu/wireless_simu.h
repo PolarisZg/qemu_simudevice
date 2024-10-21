@@ -13,6 +13,7 @@
 #include "qapi/visitor.h"
 
 #include "wireless_hal.h"
+#include "wireless_reg.h"
 
 #define WIRELESS_SIMU_DEVICE_NAME "wirelesssimu"
 #define WIRELESS_SIMU_DEVICE_DMA_MASK 32
@@ -26,6 +27,8 @@ struct wireless_simu_device_state
     struct MemoryRegion mmio;
 
     u_int64_t dma_mask;
+
+    struct wireless_simu_hal hal;
 };
 
 DECLARE_INSTANCE_CHECKER(struct wireless_simu_device_state,

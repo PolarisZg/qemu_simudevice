@@ -2,7 +2,7 @@
 
 static void wireless_simu_mmio_write(void *opaque, hwaddr addr, u_int64_t val, unsigned size)
 {
-    printf("%s : %016lx reg %u size %lx data \n", WIRELESS_SIMU_DEVICE_NAME, addr, size, val);
+    // printf("%s : %016lx reg %u size %lx data \n", WIRELESS_SIMU_DEVICE_NAME, addr, size, val);
     struct wireless_simu_device_state *wd = WIRELESS_SIMU_OBJ(opaque);
     wireless_simu_write32(wd, addr, val);
 }

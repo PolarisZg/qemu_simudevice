@@ -116,6 +116,7 @@ int wireless_hal_reg_handler(struct wireless_simu_device_state *wd, hwaddr addr,
     }
     else if (grp_count == HAL_SRNG_REG_GRP_R2)
     {
+        printf("%s : srng update %d ring \n", WIRELESS_SIMU_DEVICE_NAME, ring_id);
         switch (reg_offset)
         {
         case 0:
@@ -123,6 +124,8 @@ int wireless_hal_reg_handler(struct wireless_simu_device_state *wd, hwaddr addr,
             if (srng->ring_dir == HAL_SRNG_DIR_SRC)
             {
                 srng->u.src_ring.hp = val;
+                printf("%s : srng update %d src ring %d hp count \n",
+                       WIRELESS_SIMU_DEVICE_NAME, ring_id, srng->u.src_ring.hp);
             }
             else
             {

@@ -119,6 +119,9 @@ enum hal_srng_ring_id
 /* Common SRNG ring structure for source and destination rings */
 struct hal_srng
 {
+    /* 指向顶级模块 */
+    struct wireless_simu_device_state *wd;
+
     /* Unique SRNG ring ID */
     uint8_t ring_id;
 
@@ -290,5 +293,7 @@ struct wireless_simu_hal
 
 
 int wireless_hal_reg_handler(struct wireless_simu_device_state *wd, hwaddr addr, uint32_t val);
+
+void wireless_hal_src_ring_tp(gpointer data, gpointer user_data);
 
 #endif

@@ -29,6 +29,13 @@ static void wireless_simu_realize(struct PCIDevice *pci_dev, struct Error **errp
         printf("%s : msi irq false \n", WIRELESS_SIMU_DEVICE_NAME);
     }
 
+    /* srng_handler init */
+    wd->hal_srng_handle_pool = g_thread_pool_new(wireless_hal_src_ring_tp, (void *)wd, -1, FALSE, &wd->hal_srng_handle_err);
+    if(!wd->hal_srng_handle_pool){
+        printf("%s : srng thread pool init err \n", WIRELESS_SIMU_DEVICE_NAME);
+        return;
+    }
+
     /* mmio reg 初始化 */
     memory_region_init_io(&wd->mmio,
                           OBJECT(wd),
@@ -44,6 +51,7 @@ static void wireless_simu_exit(struct PCIDevice *pci_dev)
 {
     struct wireless_simu_device_state *wd = WIRELESS_SIMU_OBJ(pci_dev);
     wd->dma_mask = 0;
+    g_thread_pool_free(wd->hal_srng_handle_pool, FALSE, TRUE);
 }
 
 static void wireless_simu_class_init(struct ObjectClass *class, void *data)

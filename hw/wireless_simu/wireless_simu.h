@@ -29,6 +29,9 @@ struct wireless_simu_device_state
     u_int64_t dma_mask;
 
     struct wireless_simu_hal hal;
+
+    GThreadPool *hal_srng_handle_pool;
+    GError *hal_srng_handle_err;
 };
 
 DECLARE_INSTANCE_CHECKER(struct wireless_simu_device_state,

@@ -9,8 +9,10 @@ static void wireless_simu_mmio_write(void *opaque, hwaddr addr, u_int64_t val, u
 
 static u_int64_t wireless_simu_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
-    return 0;
+    struct wireless_simu_device_state *wd = WIRELESS_SIMU_OBJ(opaque);
+    return wireless_simu_read32(wd, (uint32_t)addr);
 }
+
 static const struct MemoryRegionOps wireless_simu_mmio_ops = {
     .read = wireless_simu_mmio_read,
     .write = wireless_simu_mmio_write,
@@ -22,12 +24,7 @@ static void wireless_simu_realize(struct PCIDevice *pci_dev, struct Error **errp
     struct wireless_simu_device_state *wd = WIRELESS_SIMU_OBJ(pci_dev);
 
     /* irq */
-    pci_config_set_interrupt_pin(pci_dev->config, 1);
-
-    if (msi_init(pci_dev, 0, 1, false, false, errp))
-    {
-        printf("%s : msi irq false \n", WIRELESS_SIMU_DEVICE_NAME);
-    }
+    wireless_simu_irq_init(&wd->ws_irq, &wd->parent_obj, REG_WIRELESS_SIMU_IRQ_STATUS);
 
     /* srng_handler init */
     wd->hal_srng_handle_pool = g_thread_pool_new(wireless_hal_src_ring_tp, (void *)wd, -1, FALSE, &wd->hal_srng_handle_err);
@@ -51,6 +48,10 @@ static void wireless_simu_exit(struct PCIDevice *pci_dev)
 {
     struct wireless_simu_device_state *wd = WIRELESS_SIMU_OBJ(pci_dev);
     wd->dma_mask = 0;
+
+    // deinit irq
+    wireless_simu_irq_deinit(&wd->ws_irq);
+
     g_thread_pool_free(wd->hal_srng_handle_pool, FALSE, TRUE);
 }
 

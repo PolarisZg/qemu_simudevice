@@ -14,6 +14,7 @@
 
 #include "wireless_hal.h"
 #include "wireless_reg.h"
+#include "wireless_irq.h"
 
 #define WIRELESS_SIMU_DEVICE_NAME "wirelesssimu"
 #define WIRELESS_SIMU_DEVICE_DMA_MASK 32
@@ -32,6 +33,9 @@ struct wireless_simu_device_state
 
     GThreadPool *hal_srng_handle_pool;
     GError *hal_srng_handle_err;
+
+    // irq module
+    struct wireless_simu_irq ws_irq;
 };
 
 DECLARE_INSTANCE_CHECKER(struct wireless_simu_device_state,

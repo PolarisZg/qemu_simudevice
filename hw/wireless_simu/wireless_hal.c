@@ -124,6 +124,11 @@ int wireless_hal_reg_handler(struct wireless_simu_device_state *wd, hwaddr addr,
             // 在src_ring中，0号寄存器用于sw hp的更新
             if (srng->ring_dir == HAL_SRNG_DIR_SRC)
             {
+                if (!wd->hal_srng_handle_pool)
+                {
+                    printf("%s : srng handle pool init err \n", WIRELESS_SIMU_DEVICE_NAME);
+                    return -EINVAL;
+                }
                 srng->u.src_ring.hp = val;
                 srng->wd = wd;
                 printf("%s : srng update %d src ring %d hp count \n",
@@ -149,11 +154,12 @@ int wireless_hal_reg_handler(struct wireless_simu_device_state *wd, hwaddr addr,
     return 0;
 }
 
-void wireless_hal_src_ring_tp(gpointer data, gpointer user_data){
+void wireless_hal_src_ring_tp(gpointer data, gpointer user_data)
+{
     struct wireless_simu_device_state *wd = (struct wireless_simu_device_state *)user_data;
     struct hal_srng *srng = (struct hal_srng *)data;
 
-    if(srng->wd != wd)
+    if (srng->wd != wd)
     {
         printf("%s : src srng tp update err \n", WIRELESS_SIMU_DEVICE_NAME);
         return;

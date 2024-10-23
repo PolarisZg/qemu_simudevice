@@ -291,6 +291,13 @@ struct wireless_simu_hal
     // QemuMutex srng_key[HAL_SRNG_RING_ID_MAX];
 };
 
+struct hal_test_sw2hw{
+    uint32_t buffer_addr_low;
+	uint32_t buffer_addr_info; /* %HAL_CE_SRC_DESC_ADDR_INFO_ */
+	uint32_t meta_info; /* %HAL_CE_SRC_DESC_META_INFO_ */
+    uint32_t write_index;
+    uint32_t flags; /* %HAL_CE_SRC_DESC_FLAGS_ */
+}__attribute__((packed));
 
 int wireless_hal_reg_handler(struct wireless_simu_device_state *wd, hwaddr addr, uint32_t val);
 

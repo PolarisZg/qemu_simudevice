@@ -35,7 +35,7 @@ int wireless_hal_reg_handler(struct wireless_simu_device_state *wd, hwaddr addr,
 
     if (grp_count == HAL_SRNG_REG_GRP_R0)
     {
-        printf("%s : srng set %d ring \n", WIRELESS_SIMU_DEVICE_NAME, ring_id);
+        // printf("%s : srng set %d ring \n", WIRELESS_SIMU_DEVICE_NAME, ring_id);
 
         switch (reg_offset)
         {
@@ -43,6 +43,7 @@ int wireless_hal_reg_handler(struct wireless_simu_device_state *wd, hwaddr addr,
             srng->ring_base_paddr = val;
             srng->ring_id = ring_id;
             wireless_simu_hal_srng_dir_set(ring_id, srng);
+            qemu_mutex_init(&srng->lock);
             printf("%s : srng set %d ring_id %d type \n", WIRELESS_SIMU_DEVICE_NAME, ring_id, srng->ring_dir);
             break;
         case 1:
@@ -117,7 +118,7 @@ int wireless_hal_reg_handler(struct wireless_simu_device_state *wd, hwaddr addr,
     }
     else if (grp_count == HAL_SRNG_REG_GRP_R2)
     {
-        printf("%s : srng update %d ring \n", WIRELESS_SIMU_DEVICE_NAME, ring_id);
+        // printf("%s : srng update %d ring \n", WIRELESS_SIMU_DEVICE_NAME, ring_id);
         switch (reg_offset)
         {
         case 0:
@@ -154,7 +155,10 @@ static void *get_desc_from_mem(PCIDevice *pci_dev, dma_addr_t paddr, size_t size
     void *desc = malloc(size);
 
     // 测试desc地址，非主要日志，需要被注释掉
-    printf("%s : dma desc test vaddr %p \n", WIRELESS_SIMU_DEVICE_NAME, desc);
+    /* 经过测试，下方的dma_read函数需要传入一个足够大小的desc来承接数据，因此需要上方的desc进行malloc
+     * 下方dma_read运行结束后，desc的起始逻辑地址不发生变动
+     */
+    // printf("%s : dma desc test vaddr %p \n", WIRELESS_SIMU_DEVICE_NAME, desc);
 
     uint32_t ret;
     ret = pci_dma_read(pci_dev, paddr, desc, size);
@@ -164,7 +168,7 @@ static void *get_desc_from_mem(PCIDevice *pci_dev, dma_addr_t paddr, size_t size
     }
 
     // 测试desc地址，非主要日志，需要被注释掉
-    printf("%s : dma desc test vaddr %p \n", WIRELESS_SIMU_DEVICE_NAME, desc);
+    // printf("%s : dma desc test vaddr %p \n", WIRELESS_SIMU_DEVICE_NAME, desc);
 
     return desc;
 }
@@ -187,15 +191,16 @@ void wireless_hal_src_ring_tp(gpointer data, gpointer user_data){
 
     int ret = 0;
 
-    // 对srng加锁，删除锁操作还没做
+    // 对srng加锁
+    qemu_mutex_lock(&srng->lock);
 
     if(srng->wd != wd)
     {
-        printf("%s : src srng tp update err \n", WIRELESS_SIMU_DEVICE_NAME);
+        printf("%s : src ring tp update err \n", WIRELESS_SIMU_DEVICE_NAME);
         return;
     }
 
-    printf("%s : src srng tp update %d ring id \n", WIRELESS_SIMU_DEVICE_NAME, srng->ring_id);
+    printf("%s : src ring tp update %d ring id \n", WIRELESS_SIMU_DEVICE_NAME, srng->ring_id);
 
     while(srng->u.src_ring.tp < srng->u.src_ring.hp){
         desc = get_desc_from_mem(&wd->parent_obj, srng->ring_base_paddr, srng->entry_size);
@@ -211,7 +216,7 @@ void wireless_hal_src_ring_tp(gpointer data, gpointer user_data){
          * 这里暂时根据desc的size选择拉起的desc处理函数
          */
 
-        if(srng->entry_size == sizeof(struct hal_test_sw2hw)){
+        if(srng->entry_size == (sizeof(struct hal_test_sw2hw) >> 2)){ // 上方传过来的entrysize以4char为单位
             ret = desc_hal_test_sw2hw_handle(wd, desc);
             if(ret){
                 printf("%s : %d ring read err \n", WIRELESS_SIMU_DEVICE_NAME, srng->ring_id);
@@ -221,4 +226,6 @@ void wireless_hal_src_ring_tp(gpointer data, gpointer user_data){
         }
         
     }
+
+    qemu_mutex_unlock(&srng->lock); // todo : 删除锁还没有做
 }

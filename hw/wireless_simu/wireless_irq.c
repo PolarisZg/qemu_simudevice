@@ -2,9 +2,7 @@
 
 int wireless_simu_irq_init(struct wireless_simu_irq *ws_irq, PCIDevice *pdev, uint32_t irq_addr)
 {
-    if (ws_irq->pci_dev == NULL ||
-        ws_irq->irq_addr == 0 ||
-        irq_addr == 0 ||
+    if (irq_addr == 0 ||
         pdev == NULL ||
         ws_irq->msi_enable)
     {

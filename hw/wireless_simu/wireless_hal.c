@@ -150,9 +150,9 @@ int wireless_hal_reg_handler(struct wireless_simu_device_state *wd, hwaddr addr,
     return 0;
 }
 
-static void *get_desc_from_mem(PCIDevice *pci_dev, dma_addr_t paddr, size_t size)
+static uint32_t *get_desc_from_mem(PCIDevice *pci_dev, dma_addr_t paddr, size_t size)
 {
-    void *desc = malloc(size);
+    uint32_t *desc = malloc(size);
 
     // 测试desc地址，非主要日志，需要被注释掉
     /* 经过测试，下方的dma_read函数需要传入一个足够大小的desc来承接数据，因此需要上方的desc进行malloc
@@ -162,7 +162,8 @@ static void *get_desc_from_mem(PCIDevice *pci_dev, dma_addr_t paddr, size_t size
 
     uint32_t ret;
     ret = pci_dma_read(pci_dev, paddr, desc, size);
-    if(ret){
+    if (ret)
+    {
         printf("%s : srng read from mem %d err\n", WIRELESS_SIMU_DEVICE_NAME, ret);
         return NULL;
     }
@@ -173,7 +174,8 @@ static void *get_desc_from_mem(PCIDevice *pci_dev, dma_addr_t paddr, size_t size
     return desc;
 }
 
-static int desc_hal_test_sw2hw_handle(struct wireless_simu_device_state *wd, void *desc){
+static int desc_hal_test_sw2hw_handle(struct wireless_simu_device_state *wd, void *desc)
+{
     struct hal_test_sw2hw *cmd = (struct hal_test_sw2hw *)desc;
     dma_addr_t data_paddr = cmd->buffer_addr_low | ((uint64_t)(cmd->buffer_addr_info & 0xff) << 32);
     size_t data_size = ((cmd->buffer_addr_info & 0xffff0000) >> 16);
@@ -184,17 +186,20 @@ static int desc_hal_test_sw2hw_handle(struct wireless_simu_device_state *wd, voi
     return 0;
 }
 
-void wireless_hal_src_ring_tp(gpointer data, gpointer user_data){
+void wireless_hal_src_ring_tp(gpointer data, gpointer user_data)
+{
+    /* 该函数中所有的 << 2 和 >> 2 都是为了去对driver中定义的以 32bit 为单位去计算的数据长度等参数 */
+
     struct wireless_simu_device_state *wd = (struct wireless_simu_device_state *)user_data;
     struct hal_srng *srng = (struct hal_srng *)data;
-    void *desc;
+    uint32_t *desc;
 
     int ret = 0;
 
     // 对srng加锁
     qemu_mutex_lock(&srng->lock);
 
-    if(srng->wd != wd)
+    if (srng->wd != wd)
     {
         printf("%s : src ring tp update err \n", WIRELESS_SIMU_DEVICE_NAME);
         return;
@@ -202,29 +207,40 @@ void wireless_hal_src_ring_tp(gpointer data, gpointer user_data){
 
     printf("%s : src ring tp update %d ring id \n", WIRELESS_SIMU_DEVICE_NAME, srng->ring_id);
 
-    while(srng->u.src_ring.tp < srng->u.src_ring.hp){
-        desc = get_desc_from_mem(&wd->parent_obj, srng->ring_base_paddr, srng->entry_size);
-        if(desc == NULL){
-            printf("%s : src srng read from mem err \n",WIRELESS_SIMU_DEVICE_NAME);
+    while (srng->u.src_ring.tp < srng->u.src_ring.hp)
+    {
+        desc = get_desc_from_mem(&wd->parent_obj, srng->ring_base_paddr + (srng->u.src_ring.tp << 2), srng->entry_size << 2);
+        if (desc == NULL)
+        {
+            printf("%s : src srng read from mem err \n", WIRELESS_SIMU_DEVICE_NAME);
             return;
         }
 
+        /* todo : 如果上级模块的ring_size是一个2的指数，即只有一位为 1 其他位全为 0 的数，
+         * 那么这里可以去掉取模运算，改为 & (ring_size - 1) */
+
         srng->u.src_ring.tp = (srng->u.src_ring.tp + srng->entry_size) % srng->ring_size;
-        
+
         /* 对 desc 进行处理
          * 正常的思路是为每一个srng挂上一个desc处理函数，直接拉起处理函数进行处理；但是那样需要的辅助 static 太多了
          * 这里暂时根据desc的size选择拉起的desc处理函数
          */
 
-        if(srng->entry_size == (sizeof(struct hal_test_sw2hw) >> 2)){ // 上方传过来的entrysize以4char为单位
+        for (int count = 0; count < srng->entry_size; count++)
+        {
+            printf("%s : src tp update desc data %d : %08x \n", WIRELESS_SIMU_DEVICE_NAME, count, *(uint32_t *)(desc + (count)));
+        }
+
+        if (srng->entry_size == (sizeof(struct hal_test_sw2hw) >> 2))
+        { // 上方传过来的entrysize以4char为单位
             ret = desc_hal_test_sw2hw_handle(wd, desc);
-            if(ret){
+            if (ret)
+            {
                 printf("%s : %d ring read err \n", WIRELESS_SIMU_DEVICE_NAME, srng->ring_id);
             }
             pci_dma_write(&wd->parent_obj, srng->u.src_ring.tp_paddr, &srng->u.src_ring.tp, sizeof(srng->u.src_ring.tp));
             continue;
         }
-        
     }
 
     qemu_mutex_unlock(&srng->lock); // todo : 删除锁还没有做

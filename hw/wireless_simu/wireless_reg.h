@@ -11,8 +11,8 @@
 * |-------- 16bit --------|---- 8 bit ----|- 1 bit -|--- 5 bit ---|- 2 bit -|
 * |          0001         |    ring_id    |  grp    |    reg      | 4 char  |*/
 
-#define REG_WIRELESS_SIMU_IRQ_STATUS 0x00000001
 // 未确定寄存器组，高16bit为0000
+#define REG_WIRELESS_SIMU_IRQ_STATUS 0x00000001
 
 void wireless_simu_write32(struct wireless_simu_device_state *wd, hwaddr addr, u_int32_t val);
 

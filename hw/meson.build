@@ -66,3 +66,6 @@ subdir('sparc')
 subdir('sparc64')
 subdir('tricore')
 subdir('xtensa')
+
+# subdir('polarissimu')
+subdir('wireless_simu')

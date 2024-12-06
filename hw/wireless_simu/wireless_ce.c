@@ -1,0 +1,180 @@
+#include "wireless_simu.h"
+
+static const struct srng_test_attr ce_ring_configs[] = {
+    {
+        .flags = 0,
+        .dest_nentries = 32,
+        .src_sz_max = 2048, // 在dest_ring中，该参数指定了每个包的最长大小
+        .src_nentries = 0,
+    },
+};
+
+static struct srng_test_ring *hal_srng_alloc_ring(struct wireless_simu_device_state *wd, int nentries, int desc_sz)
+{
+    struct srng_test_ring *ring;
+    size_t size = sizeof(struct srng_test_ring) + sizeof(struct sk_buff) * nentries;
+
+    ring = malloc(size);
+    if (!ring)
+        return NULL;
+    memset(ring, 0, size);
+
+    ring->skb = (void *)ring + sizeof(struct srng_test_ring);
+    ring->nentries = nentries;
+    ring->nentries_mask = nentries - 1;
+    ring->sw_index = 0;
+    ring->write_index = 0;
+
+    return ring;
+}
+
+static int ce_alloc_pipe(struct copy_engine *ce, int pipe_num)
+{
+    int ret = 0;
+    struct srng_test_pipe *pipe = &ce->pipes[pipe_num];
+    const struct srng_test_attr *attr = &ce->host_config[pipe_num];
+    struct srng_test_ring *ring;
+    int nentries;
+    int desc_sz;
+
+    pipe->pipe_num = pipe_num;
+    pipe->wd = ce->wd;
+    pipe->attr_flags = attr->flags;
+    pipe->buf_sz = attr->src_sz_max;
+
+    if (attr->dest_nentries)
+    {
+        pipe->recv_cb = attr->recv_cb;
+        pipe->send_cb = attr->send_cb;
+
+        nentries = roundup_pow_of_two(attr->dest_nentries);
+        desc_sz = sizeof(struct hal_test_dst);
+        ring = hal_srng_alloc_ring(ce->wd, nentries, desc_sz);
+        if (!ring)
+        {
+            printf("%s : ce alloc skb err \n", WIRELESS_SIMU_DEVICE_NAME);
+            return -ENOMEM;
+        }
+        pipe->dst_ring = ring;
+
+        /* 暂时只需要一个dst_ring用来存放skb的缓存空间，少写一个status_ring */
+    }
+    else
+    {
+        ret = -EINVAL;
+    }
+
+    return ret;
+}
+
+static void ce_dst_ring_handler(void *user_data)
+{
+    // printf("%s : ce dst handler in \n", WIRELESS_SIMU_DEVICE_NAME);
+
+    struct srng_test_pipe *pipe = (struct srng_test_pipe *)user_data;
+    struct wireless_simu_device_state *wd = pipe->wd;
+    struct srng_test_ring *dst_ring = pipe->dst_ring;
+    if (!dst_ring)
+    {
+        printf("%s : ce dst ring no dst \n", WIRELESS_SIMU_DEVICE_NAME);
+        return;
+    }
+    struct hal_srng *srng = &wd->hal.srng_list[dst_ring->hal_ring_id];
+    uint32_t *desc;
+    struct hal_test_dst *entry;
+    struct sk_buff *skb;
+    dma_addr_t paddr;
+    uint32_t index;
+
+    qemu_mutex_lock(&srng->lock);
+
+    while (wireless_hal_srng_read_src_ring(wd, srng, &desc) == 0)
+    {
+        entry = (struct hal_test_dst *)desc;
+        index = dst_ring->sw_index;
+        skb = &dst_ring->skb[index];
+        paddr = entry->buffer_addr_low +
+                (((uint64_t)entry->buffer_addr_info & 0xff) << 32);
+        WIRELESS_SIMU_SKB_CB(skb)->paddr = paddr;
+        printf("%s : dst ring %08x skb %08x paddr %016lx \n",
+               WIRELESS_SIMU_DEVICE_NAME, dst_ring->hal_ring_id, index, WIRELESS_SIMU_SKB_CB(skb)->paddr);
+        index = (index + 1) & dst_ring->nentries_mask;
+        dst_ring->sw_index = index;
+        free(desc);
+    }
+
+    qemu_mutex_unlock(&srng->lock);
+
+    return;
+}
+
+static int ce_init_ring(struct srng_test_pipe *pipe, struct srng_test_ring *ring, int id, enum hal_ring_type type)
+{
+    int ret = 0;
+    struct hal_srng_params params = {0};
+
+    // 填充params
+    params.hal_srng_handler = ce_dst_ring_handler;
+    params.user_data = (void *)pipe;
+
+    ret = wireless_hal_srng_setup(pipe->wd, type, id, 0, &params);
+    if (ret < 0)
+    {
+        printf("%s : ce init ring err \n", WIRELESS_SIMU_DEVICE_NAME);
+        return ret;
+    }
+
+    ring->hal_ring_id = ret;
+
+    return 0;
+}
+
+int wireless_simu_ce_init(struct wireless_simu_device_state *wd)
+{
+    if (!wd)
+        return -EINVAL;
+
+    int ret = 0;
+    struct copy_engine *ce;
+    struct srng_test_pipe *pipe;
+    wd->ce_count_num = WIRELESS_SIMU_CE_COUNT;
+
+    for (int ce_num = 0; ce_num < wd->ce_count_num; ce_num++)
+    {
+        ce = &wd->ce_group[ce_num];
+        ce->pipes_count = SRNG_TEST_PIPE_COUNT_MAX;
+        ce->wd = wd;
+
+        ce->host_config = ce_ring_configs; // todo : 这个应该使用复制操作，一定要改
+
+        pthread_mutex_init(&ce->srng_test_lock, NULL);
+
+        for (int pipe_num = 0; pipe_num < ce->pipes_count; pipe_num++)
+        {
+            /* 为dst_ring申请 skb 数组
+             */
+            ret = ce_alloc_pipe(ce, pipe_num);
+            if (ret)
+            {
+                printf("%s : ce pipe alloc err %d ce id %d pipe id %d \n",
+                       WIRELESS_SIMU_DEVICE_NAME, ret, ce_num, pipe_num);
+                return ret;
+            }
+
+            /* 将ce pipe与实际的ring对应
+             */
+            pipe = &ce->pipes[pipe_num];
+            if (pipe->dst_ring)
+            {
+                ret = ce_init_ring(pipe, pipe->dst_ring, pipe_num, HAL_TEST_SRNG_DST);
+            }
+            else
+            {
+                printf("%s : ce pipe dst ring err \n", WIRELESS_SIMU_DEVICE_NAME);
+                return -EINVAL;
+            }
+        }
+    }
+
+    return ret;
+}

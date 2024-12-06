@@ -3,6 +3,8 @@
 
 #include "wireless_simu.h"
 
+#define HAL_TEST_SW2HW_SIZE 0x0000ffff
+
 struct wireless_simu_device_state;
 
 /* SRNG registers are split into two groups R0 and R2 */
@@ -16,17 +18,88 @@ enum hal_srng_dir
     HAL_SRNG_DIR_DST
 };
 
+/* HW SRNG configuration table */
+struct hal_srng_config
+{
+    int start_ring_id;
+    uint16_t max_rings;
+    uint16_t entry_size;
+    uint32_t reg_start[HAL_SRNG_NUM_REG_GRP];
+    uint16_t reg_size[HAL_SRNG_NUM_REG_GRP];
+    uint8_t lmac_ring;
+    enum hal_srng_dir ring_dir;
+    uint32_t max_size;
+};
+
+/*
+ * 该枚举要和 static const struct hal_srng_config hw_srng_config_template[] 中的预定义数据类型一一对应，
+ * hal_srng_create_config会读取预定义数据并根据该枚举中的顺序对数据进行访问
+ */
+enum hal_ring_type
+{
+    HAL_TEST_SRNG,
+    HAL_TEST_SRNG_DST,
+    HAL_TEST_SRNG_DST_STATUS,
+    // HAL_REO_DST,
+    // HAL_REO_EXCEPTION,
+    // HAL_REO_REINJECT,
+    // HAL_REO_CMD,
+    // HAL_REO_STATUS,
+    // HAL_TCL_DATA,
+    // HAL_TCL_CMD,
+    // HAL_TCL_STATUS,
+    // HAL_CE_SRC,
+    // HAL_CE_DST,
+    // HAL_CE_DST_STATUS,
+    // HAL_WBM_IDLE_LINK,
+    // HAL_SW2WBM_RELEASE,
+    // HAL_WBM2SW_RELEASE,
+    // HAL_RXDMA_BUF,
+    // HAL_RXDMA_DST,
+    // HAL_RXDMA_MONITOR_BUF,
+    // HAL_RXDMA_MONITOR_STATUS,
+    // HAL_RXDMA_MONITOR_DST,
+    // HAL_RXDMA_MONITOR_DESC,
+    // HAL_RXDMA_DIR_BUF,
+    // HAL_MAX_RING_TYPES,
+};
+
+/* srng 注册信息 */
+struct hal_srng_params
+{
+    dma_addr_t ring_base_paddr;
+    uint32_t *ring_base_vaddr;
+    int num_entries;
+    uint32_t intr_batch_cntr_thres_entries;
+    uint32_t intr_timer_thres_us;
+    uint32_t flags;
+    uint32_t max_buffer_len;
+    uint32_t low_threshold;
+    dma_addr_t msi_addr;
+    uint32_t msi_data;
+
+    /* Add more params as needed */
+    /* 指向使用该srng 的处理函数
+     *
+     * 当该srng的hp / tp 被修改后，应该拉起该函数对srng进行之后的处理
+     * 在处理的过程中，为标记使用该srng的模块，上级模块将自身注册到user_data之中 */
+    void (*hal_srng_handler)(void *user_data);
+
+    /* 标记上述处理函数中使用的的参数 */
+    void *user_data;
+};
+
 enum hal_srng_ring_id
 {
     HAL_SRNG_RING_ID_REO2SW1 = 0,
-    HAL_SRNG_RING_ID_TEST_HW2SW_DMA = 1,
+    HAL_SRNG_RING_ID_TEST_DST_STATUS = 1,
     // HAL_SRNG_RING_ID_REO2SW2,
     // HAL_SRNG_RING_ID_REO2SW3,
     // HAL_SRNG_RING_ID_REO2SW4,
     // HAL_SRNG_RING_ID_REO2TCL,
     // HAL_SRNG_RING_ID_SW2REO,
 
-    HAL_SRNG_RING_ID_TEST_HW2SW = 8,
+    HAL_SRNG_RING_ID_TEST_DST = 8,
     // HAL_SRNG_RING_ID_REO_CMD = 8,
     // HAL_SRNG_RING_ID_REO_STATUS,
 
@@ -124,6 +197,15 @@ struct hal_srng
     /* 指向顶级模块 */
     struct wireless_simu_device_state *wd;
 
+    /* 指向使用该srng 的处理函数
+     *
+     * 当该srng的hp / tp 被修改后，应该拉起该函数对srng进行之后的处理
+     * 在处理的过程中，为标记使用该srng的模块，上级模块将自身注册到user_data之中 */
+    void (*hal_srng_handler)(void* user_data);
+
+    /* 标记上述处理函数中使用的的参数 */
+    void *user_data;
+
     /* Unique SRNG ring ID */
     uint8_t ring_id;
 
@@ -219,7 +301,7 @@ struct hal_srng
 
             /* Shadow tail pointer location to be updated by HW */
             dma_addr_t tp_paddr;
-            
+
             uint32_t tp;
 
             /* Cached tail pointer */
@@ -238,19 +320,6 @@ struct hal_srng
             uint32_t last_tp;
         } src_ring;
     } u;
-};
-
-/* HW SRNG configuration table */
-struct hal_srng_config
-{
-    int start_ring_id;
-    uint16_t max_rings;
-    uint16_t entry_size;
-    uint32_t reg_start[HAL_SRNG_NUM_REG_GRP];
-    uint16_t reg_size[HAL_SRNG_NUM_REG_GRP];
-    uint8_t lmac_ring;
-    enum hal_srng_dir ring_dir;
-    uint32_t max_size;
 };
 
 /*
@@ -293,16 +362,23 @@ struct wireless_simu_hal
     // QemuMutex srng_key[HAL_SRNG_RING_ID_MAX];
 };
 
-struct hal_test_sw2hw{
+struct hal_test_sw2hw
+{
     uint32_t buffer_addr_low;
-	uint32_t buffer_addr_info; /* %HAL_CE_SRC_DESC_ADDR_INFO_ */
-	uint32_t meta_info; /* %HAL_CE_SRC_DESC_META_INFO_ */
+    uint32_t buffer_addr_info; /* %HAL_CE_SRC_DESC_ADDR_INFO_ */
+    uint32_t meta_info;        /* %HAL_CE_SRC_DESC_META_INFO_ */
     uint32_t write_index;
     uint32_t flags; /* %HAL_CE_SRC_DESC_FLAGS_ */
-}__attribute__((packed));
+} __attribute__((packed));
 
 int wireless_hal_reg_handler(struct wireless_simu_device_state *wd, hwaddr addr, uint32_t val);
 
 void wireless_hal_src_ring_tp(gpointer data, gpointer user_data);
+
+/* 为对应type的ring分配id号 */
+int wireless_hal_srng_setup(struct wireless_simu_device_state *wd, enum hal_ring_type type, int ring_num, int mac_id, struct hal_srng_params *params);
+
+/* 读取src ring的一项entry并存如desc */
+int wireless_hal_srng_read_src_ring(struct wireless_simu_device_state *wd, struct hal_srng *srng, uint32_t **ans);
 
 #endif

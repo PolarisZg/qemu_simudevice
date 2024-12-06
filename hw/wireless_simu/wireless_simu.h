@@ -15,6 +15,9 @@
 #include "wireless_hal.h"
 #include "wireless_reg.h"
 #include "wireless_irq.h"
+#include "wireless_ce.h"
+#include "wireless_sk_buff.h"
+#include "wireless_num.h"
 
 #define WIRELESS_SIMU_DEVICE_NAME "wirelesssimu"
 #define WIRELESS_SIMU_DEVICE_DMA_MASK 32
@@ -30,6 +33,8 @@ struct wireless_simu_device_state
     u_int64_t dma_mask;
 
     struct wireless_simu_hal hal;
+    int ce_count_num;
+    struct copy_engine ce_group[WIRELESS_SIMU_CE_COUNT];
 
     GThreadPool *hal_srng_handle_pool;
     GError *hal_srng_handle_err;

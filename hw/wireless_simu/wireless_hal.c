@@ -1,17 +1,58 @@
-
 #include "wireless_simu.h"
 
+static const struct hal_srng_config hw_srng_config_template[] = {
+    {
+        /* HAL_TEST_SRNG  与 enum hal_ring_type 对应*/
+        .start_ring_id = HAL_SRNG_RING_ID_TEST_SW2HW,
+        .max_rings = 1,
+        .entry_size = sizeof(struct hal_test_sw2hw) >> 2, // 右移 2 位代表以32bit为单位
+        .lmac_ring = false,
+        .ring_dir = HAL_SRNG_DIR_SRC,
+        .max_size = HAL_TEST_SW2HW_SIZE,
+    },
+    {
+        /* HAL_TEST_SRNG_DST */
+        .start_ring_id = HAL_SRNG_RING_ID_TEST_DST,
+        .max_rings = 1,
+        .entry_size = sizeof(struct hal_test_dst) >> 2,
+        .lmac_ring = false,
+        .ring_dir = HAL_SRNG_DIR_SRC,
+        .max_size = HAL_TEST_SW2HW_SIZE,
+    },
+    {
+        /* HAL_TEST_SRNG_DST_STATUS 和上一个ring配套使用*/
+        .start_ring_id = HAL_SRNG_RING_ID_TEST_DST_STATUS,
+        .max_rings = 1,
+        .entry_size = sizeof(struct hal_test_dst_status) >> 2,
+        .lmac_ring = false,
+        .ring_dir = HAL_SRNG_DIR_DST,
+        .max_size = HAL_TEST_SW2HW_SIZE,
+    },
+};
+
 #define isInInterval(val, left, right) ((right >= left) && (val >= left) && (val <= right)) // 判断val是否落在[left, right]区间内
+#define case_group(n) case n:case (n + 1):case (n + 2):case (n + 3):case(n + 4):case(n + 5)
 
 static void wireless_simu_hal_srng_dir_set(int ring_id, struct hal_srng *srng)
 {
     // 本身是一个静态的配置，每个ring在设计之初就确定好方向无法修改；
     // 该方向与driver中标记一致，driver中为src在device中也被标记为src
 
-    if (isInInterval(ring_id, HAL_SRNG_RING_ID_TEST_SW2HW, HAL_SRNG_RING_ID_TEST_SW2HW))
+    switch (ring_id)
+    {
+    case HAL_SRNG_RING_ID_TEST_SW2HW:
         srng->ring_dir = HAL_SRNG_DIR_SRC;
-    else
+        break;
+    case_group(HAL_SRNG_RING_ID_TEST_DST_STATUS):
         srng->ring_dir = HAL_SRNG_DIR_DST;
+        break;
+    case_group(HAL_SRNG_RING_ID_TEST_DST):
+        srng->ring_dir = HAL_SRNG_DIR_SRC;
+        break;
+    default:
+        printf("%s : ring id %d err \n", WIRELESS_SIMU_DEVICE_NAME, ring_id);
+        break;
+    }
 }
 
 int wireless_hal_reg_handler(struct wireless_simu_device_state *wd, hwaddr addr, uint32_t val)
@@ -127,8 +168,8 @@ int wireless_hal_reg_handler(struct wireless_simu_device_state *wd, hwaddr addr,
             {
                 srng->u.src_ring.hp = val;
                 srng->wd = wd;
-                printf("%s : srng update %d src ring %d hp count \n",
-                       WIRELESS_SIMU_DEVICE_NAME, ring_id, srng->u.src_ring.hp);
+                // printf("%s : srng update %d src ring %d hp count \n",
+                //        WIRELESS_SIMU_DEVICE_NAME, ring_id, srng->u.src_ring.hp);
                 g_thread_pool_push(wd->hal_srng_handle_pool, (void *)srng, &wd->hal_srng_handle_err);
             }
             else
@@ -196,6 +237,17 @@ void wireless_hal_src_ring_tp(gpointer data, gpointer user_data)
 
     int ret = 0;
 
+    // printf("%s : hal src ring tp thread \n", WIRELESS_SIMU_DEVICE_NAME);
+
+    if (srng->hal_srng_handler && srng->user_data)
+    {
+        srng->hal_srng_handler(srng->user_data);
+        // printf("%s : hal srng %d has handler \n", WIRELESS_SIMU_DEVICE_NAME, srng->ring_id);
+        return;
+    }
+
+    printf("%s : src ring id %d no srng handler \n", WIRELESS_SIMU_DEVICE_NAME, srng->ring_id);
+
     // 对srng加锁
     qemu_mutex_lock(&srng->lock);
 
@@ -225,23 +277,86 @@ void wireless_hal_src_ring_tp(gpointer data, gpointer user_data)
          * 正常的思路是为每一个srng挂上一个desc处理函数，直接拉起处理函数进行处理；但是那样需要的辅助 static 太多了
          * 这里暂时根据desc的size选择拉起的desc处理函数
          */
-
-        for (int count = 0; count < srng->entry_size; count++)
+        switch (srng->ring_id)
         {
-            printf("%s : src tp update desc data %d : %08x \n", WIRELESS_SIMU_DEVICE_NAME, count, *(uint32_t *)(desc + (count)));
-        }
-
-        if (srng->entry_size == (sizeof(struct hal_test_sw2hw) >> 2))
-        { // 上方传过来的entrysize以4char为单位
+        case HAL_SRNG_RING_ID_TEST_SW2HW:
             ret = desc_hal_test_sw2hw_handle(wd, desc);
             if (ret)
             {
                 printf("%s : %d ring read err \n", WIRELESS_SIMU_DEVICE_NAME, srng->ring_id);
             }
             pci_dma_write(&wd->parent_obj, srng->u.src_ring.tp_paddr, &srng->u.src_ring.tp, sizeof(srng->u.src_ring.tp));
-            continue;
+            break;
+        case HAL_SRNG_RING_ID_TEST_DST:
+            // ret = desc_hal_test_dst_handle(wd, desc);
+            break;
+
+        default:
+            break;
         }
+
+        // for (int count = 0; count < srng->entry_size; count++)
+        // {
+        //     printf("%s : src tp update desc data %d : %08x \n", WIRELESS_SIMU_DEVICE_NAME, count, *(uint32_t *)(desc + (count)));
+        // }
+
+        // if (srng->entry_size == (sizeof(struct hal_test_sw2hw) >> 2))
+        // { // 上方传过来的entrysize以4char为单位
+        //     ret = desc_hal_test_sw2hw_handle(wd, desc);
+        //     if (ret)
+        //     {
+        //         printf("%s : %d ring read err \n", WIRELESS_SIMU_DEVICE_NAME, srng->ring_id);
+        //     }
+        //     pci_dma_write(&wd->parent_obj, srng->u.src_ring.tp_paddr, &srng->u.src_ring.tp, sizeof(srng->u.src_ring.tp));
+        //     continue;
+        // }
     }
 
     qemu_mutex_unlock(&srng->lock); // todo : 删除锁还没有做
+}
+
+int wireless_hal_srng_setup(struct wireless_simu_device_state *wd,
+                            enum hal_ring_type type,
+                            int ring_num, int mac_id,
+                            struct hal_srng_params *params)
+{
+    int ret = 0;
+    struct hal_srng *srng;
+
+    ret = hw_srng_config_template[type].start_ring_id + ring_num;
+
+    srng = &wd->hal.srng_list[ret];
+
+    srng->hal_srng_handler = params->hal_srng_handler;
+    srng->user_data = params->user_data;
+
+    /* 和驱动中不一样，qemu设备中很多srng的参数需要等待驱动端的写寄存器配置 */
+
+    return ret;
+}
+
+int wireless_hal_srng_read_src_ring(struct wireless_simu_device_state *wd, struct hal_srng *srng, uint32_t **ans)
+{
+    // printf("%s : get desc from srng %d \n", WIRELESS_SIMU_DEVICE_NAME, srng->ring_id);
+    int ret = 0;
+    uint32_t *desc;
+    if (srng->u.src_ring.tp < srng->u.src_ring.hp)
+    {
+        desc = get_desc_from_mem(&wd->parent_obj, srng->ring_base_paddr + (srng->u.src_ring.tp << 2), srng->entry_size << 2);
+        if (desc == NULL)
+        {
+            printf("%s : src srng read from mem err \n", WIRELESS_SIMU_DEVICE_NAME);
+            ret = -ENOBUFS;
+            goto exit;
+        }
+        *ans = desc;
+        srng->u.src_ring.tp = (srng->u.src_ring.tp + srng->entry_size) % srng->ring_size;
+    }
+    else
+    {
+        ret = -ENOBUFS;
+    }
+
+exit:
+    return ret;
 }

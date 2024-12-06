@@ -30,7 +30,7 @@ static void wireless_simu_realize(struct PCIDevice *pci_dev, struct Error **errp
     wd->hal_srng_handle_pool = g_thread_pool_new(wireless_hal_src_ring_tp, (void *)wd, -1, FALSE, &wd->hal_srng_handle_err);
     if(!wd->hal_srng_handle_pool){
         printf("%s : srng thread pool init err \n", WIRELESS_SIMU_DEVICE_NAME);
-        return;
+        exit(-1);
     }
 
     /* mmio reg 初始化 */
@@ -40,6 +40,9 @@ static void wireless_simu_realize(struct PCIDevice *pci_dev, struct Error **errp
                           pci_dev,
                           "wireless_simu_mmio",
                           (1 << 30));
+    
+    /* ce dst */
+    wireless_simu_ce_init(wd);
 
     pci_register_bar(pci_dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY, &wd->mmio);
 }

@@ -270,10 +270,10 @@ struct hal_srng
             uint32_t tp;
 
             /* Shadow head pointer location to be updated by HW */
-            volatile uint32_t *hp_addr;
+            dma_addr_t hp_paddr;
 
             /* Cached head pointer */
-            uint32_t cached_hp;
+            uint32_t hp;
 
             /* Tail pointer location to be updated by SW - This
              * will be a register address and need not be

@@ -13,7 +13,7 @@ struct srng_test_ring
 	unsigned int nentries_mask;
 
 	/*
-	 * */
+	 * 已填充的dma_addr地址头指针*/
 	unsigned int sw_index;
 
 	unsigned int write_index;
@@ -67,6 +67,9 @@ struct srng_test_pipe
     struct srng_test_ring *status_ring;
 
 	uint64_t timestamp;
+
+	/* 访问锁 */
+	pthread_mutex_t pipe_lock;
 };
 
 struct srng_test_attr
@@ -125,5 +128,10 @@ struct hal_test_dst_status{
  * 和driver中的初始化不同，hw中对ce的初始化是不需要分配大量的空间的，
  * hw本身也不应该占用大量的内存空间*/
 int wireless_simu_ce_init(struct wireless_simu_device_state *wd);
+
+/* 向驱动发送数据 
+ * 该发送不用考虑是否成功, 不成功就是驱动方面出了问题, 不能耽误之后的发送操作
+ */
+void wireless_simu_ce_post_data(struct wireless_simu_device_state *wd, void *data, size_t data_size);
 
 #endif /*WIRELESS_SIMU_CE*/

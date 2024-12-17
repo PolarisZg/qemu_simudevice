@@ -41,6 +41,7 @@ static int ce_alloc_pipe(struct copy_engine *ce, int pipe_num)
     pipe->wd = ce->wd;
     pipe->attr_flags = attr->flags;
     pipe->buf_sz = attr->src_sz_max;
+    pthread_mutex_init(&pipe->pipe_lock, NULL);
 
     if (attr->dest_nentries)
     {
@@ -57,7 +58,17 @@ static int ce_alloc_pipe(struct copy_engine *ce, int pipe_num)
         }
         pipe->dst_ring = ring;
 
-        /* 暂时只需要一个dst_ring用来存放skb的缓存空间，少写一个status_ring */
+        /* status_ring */
+        desc_sz = sizeof(struct hal_test_dst_status);
+        ring = hal_srng_alloc_ring(ce->wd, 0, desc_sz); // nentries 置零表示不去分配skb数组空间
+        if (!ring)
+        {
+            printf("%s : ce alloc skb err \n", WIRELESS_SIMU_DEVICE_NAME);
+            free(pipe->dst_ring);
+            pipe->dst_ring = NULL;
+            return -ENOMEM;
+        }
+        pipe->status_ring = ring;
     }
     else
     {
@@ -79,6 +90,7 @@ static void ce_dst_ring_handler(void *user_data)
         printf("%s : ce dst ring no dst \n", WIRELESS_SIMU_DEVICE_NAME);
         return;
     }
+    pthread_mutex_lock(&pipe->pipe_lock);
     struct hal_srng *srng = &wd->hal.srng_list[dst_ring->hal_ring_id];
     uint32_t *desc;
     struct hal_test_dst *entry;
@@ -104,6 +116,8 @@ static void ce_dst_ring_handler(void *user_data)
     }
 
     qemu_mutex_unlock(&srng->lock);
+
+    pthread_mutex_unlock(&pipe->pipe_lock);
 
     return;
 }
@@ -167,6 +181,7 @@ int wireless_simu_ce_init(struct wireless_simu_device_state *wd)
             if (pipe->dst_ring)
             {
                 ret = ce_init_ring(pipe, pipe->dst_ring, pipe_num, HAL_TEST_SRNG_DST);
+                ret = ce_init_ring(pipe, pipe->status_ring, pipe_num, HAL_TEST_SRNG_DST_STATUS);
             }
             else
             {
@@ -177,4 +192,92 @@ int wireless_simu_ce_init(struct wireless_simu_device_state *wd)
     }
 
     return ret;
+}
+
+void wireless_simu_ce_post_data(struct wireless_simu_device_state *wd, void *data, size_t data_size)
+{
+    struct copy_engine *ce;
+    struct srng_test_pipe *pipe;
+    unsigned int sw_index;
+    unsigned int write_index;
+    struct srng_test_ring *dst_ring;
+    struct srng_test_ring *status_ring;
+    struct sk_buff *skb;
+    struct hal_srng *status_srng;
+    dma_addr_t data_paddr;
+    struct hal_test_dst_status desc;
+
+    for (int ce_num = 0; ce_num < wd->ce_count_num; ce_num++)
+    {
+        ce = &wd->ce_group[ce_num];
+        pthread_mutex_lock(&ce->srng_test_lock);
+
+        for (int pipe_num = 0; pipe_num < ce->pipes_count; pipe_num++)
+        {
+            pipe = &ce->pipes[pipe_num];
+            if (!pipe->dst_ring || !pipe->status_ring)
+                continue;
+
+            /* 数据发送 */
+            pthread_mutex_lock(&pipe->pipe_lock);
+
+            dst_ring = pipe->dst_ring;
+            sw_index = dst_ring->sw_index;
+            write_index = dst_ring->write_index;
+
+            if (sw_index == write_index)
+            {
+                pthread_mutex_unlock(&pipe->pipe_lock);
+                continue;
+            }
+
+            status_ring = pipe->status_ring;
+            status_srng = &wd->hal.srng_list[status_ring->hal_ring_id];
+            if (status_srng->u.dst_ring.hp_paddr == 0)
+            {
+                pthread_mutex_unlock(&pipe->pipe_lock);
+                continue;
+            }
+
+            skb = &dst_ring->skb[write_index];
+            write_index = (write_index + 1) & dst_ring->nentries_mask;
+            dst_ring->write_index = write_index;
+
+            /* 对数据的发送分为两个部分:
+             * 1. 将数据拷贝至内存区域内
+             * 2. 将数据的描述符放入ring */
+
+            /* 1. */
+            data_paddr = WIRELESS_SIMU_SKB_CB(skb)->paddr;
+            pci_dma_write(&wd->parent_obj, data_paddr, data, (uint64_t)data_size);
+
+            /* 2.
+             * 这一步没考虑驱动超慢导致的头指针套圈 */
+            desc.buffer_length = (uint32_t)data_size;
+            pci_dma_write(&wd->parent_obj,
+                          status_srng->ring_base_paddr + (status_srng->u.dst_ring.hp << 2),
+                          &desc, sizeof(desc));
+            status_srng->u.dst_ring.hp = (status_srng->u.dst_ring.hp + status_srng->entry_size) %
+                                         status_srng->ring_size;
+            pci_dma_write(&wd->parent_obj, status_srng->u.dst_ring.hp_paddr,
+                          &status_srng->u.dst_ring.hp,
+                          sizeof(status_srng->u.dst_ring.hp));
+
+            printf("%s : ce %d pipe %d srng %d hp %08x hp_paddr %016lx data size %016lx \n",
+                   WIRELESS_SIMU_DEVICE_NAME,
+                   ce_num, pipe_num,
+                   status_srng->ring_id, status_srng->u.dst_ring.hp,
+                   status_srng->u.dst_ring.hp_paddr, (uint64_t)data_size);
+
+            pthread_mutex_unlock(&pipe->pipe_lock);
+            pthread_mutex_unlock(&ce->srng_test_lock);
+            wireless_simu_irq_raise(&wd->ws_irq, WIRELESS_SIMU_IRQ_STATU_SRNG_DST_DMA_TEST_RING_0);
+            goto end;
+        }
+
+        pthread_mutex_unlock(&ce->srng_test_lock);
+    }
+
+end:
+    return;
 }

@@ -30,4 +30,11 @@ static inline uint64_t roundup_pow_of_two_u64(uint64_t n) {
     return (n <= 1) ? 1 : (1ULL << (64 - __builtin_clzll(n - 1)));
 }
 
+
+// 处理非对齐读取
+#define READ_64BIT_FROM_ADDR(addr) ({           \
+    uint64_t _val;                             \
+    memcpy(&_val, (addr), sizeof(uint64_t));   \
+    _val;                                      \
+})
 #endif /*WIRELESS_SIMU_NUM*/

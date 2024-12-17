@@ -30,6 +30,9 @@ void wireless_simu_irq_deinit(struct wireless_simu_irq *ws_irq)
 {
     ws_irq->irq_enable = false;
 
+    /* 这里这几个mutex设计的比较迷惑 */
+    qemu_mutex_unlock(&ws_irq->irq_intx_mutex);
+    qemu_mutex_lock(&ws_irq->irq_intx_mutex);
     qemu_mutex_unlock(&ws_irq->irq_intx_mutex);
     qemu_mutex_destroy(&ws_irq->irq_intx_mutex);
 

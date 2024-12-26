@@ -39,7 +39,7 @@ static void wireless_simu_realize(struct PCIDevice *pci_dev, struct Error **errp
                           &wireless_simu_mmio_ops,
                           pci_dev,
                           "wireless_simu_mmio",
-                          (1 << 30));
+                          (256 * MiB));
     
     /* ce dst */
     wireless_simu_ce_init(wd);

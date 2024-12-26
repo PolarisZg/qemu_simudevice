@@ -33,7 +33,9 @@ static inline void wireless_simu_irq_raise(struct wireless_simu_irq *ws_irq, uin
     {
         qemu_mutex_lock(&ws_irq->irq_intx_mutex);
         ws_irq->irq_status_val = statu;
+        bql_lock();
         pci_set_irq(ws_irq->pci_dev, 1);
+        bql_unlock();
     }
 }
 

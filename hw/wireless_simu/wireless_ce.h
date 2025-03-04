@@ -6,7 +6,7 @@
 #define WIRELESS_SIMU_CE_COUNT 1
 #define SRNG_TEST_PIPE_COUNT_MAX 1 // ring（pipes）数量
 
-struct srng_test_ring
+struct wireless_simu_ce_ring
 {
 	/* ring 中 entries 数量 */
 	unsigned int nentries;
@@ -44,7 +44,7 @@ struct srng_test_ring
 	struct sk_buff *skb;
 };
 
-struct srng_test_pipe
+struct wireless_simu_ce_pipe
 {
 	struct wireless_simu_device_state *wd;
 	uint16_t pipe_num;
@@ -58,13 +58,13 @@ struct srng_test_pipe
 	// struct tasklet_struct intr_tq;
 
     /* 向hw传输数据 */
-	// struct srng_test_ring *src_ring;
+	// struct wireless_simu_ce_ring *src_ring;
 	
     /* 填充sw中申请的dma地址 */
-    struct srng_test_ring *dst_ring;
+    struct wireless_simu_ce_ring *dst_ring;
 	
     /* 填充有rx的数据 */
-    struct srng_test_ring *status_ring;
+    struct wireless_simu_ce_ring *status_ring;
 
 	uint64_t timestamp;
 
@@ -72,7 +72,7 @@ struct srng_test_pipe
 	pthread_mutex_t pipe_lock;
 };
 
-struct srng_test_attr
+struct ce_attr
 {
 	unsigned int flags;
 
@@ -102,14 +102,39 @@ struct copy_engine
     /* 下方pipes 的数量 */
     int pipes_count;
     
-	struct srng_test_pipe pipes[SRNG_TEST_PIPE_COUNT_MAX];
-	const struct srng_test_attr *host_config;
-	pthread_mutex_t srng_test_lock;
+	struct wireless_simu_ce_pipe pipes[SRNG_TEST_PIPE_COUNT_MAX];
+	const struct ce_attr *host_config;
+	pthread_mutex_t ce_lock;
 
     /* 超时处理
      * pipe 的 dst 中空位不足时，使用该数据来保证过一段时间后重试 */
     // struct timer_list rx_replenish_retry;
 };
+
+/* ce src desc 内容*/
+struct hal_ce_srng_src_desc
+{
+    uint32_t buffer_addr_low;
+    uint32_t buffer_addr_info; /* %HAL_CE_SRC_DESC_ADDR_INFO_ */
+    uint32_t meta_info;        /* %HAL_CE_SRC_DESC_META_INFO_ */
+    uint32_t flags;            /* %HAL_CE_SRC_DESC_FLAGS_ */
+} __attribute__((__packed__));
+
+/* ce dst desc 内容 */
+struct hal_ce_srng_dest_desc
+{
+    uint32_t buffer_addr_low;
+    uint32_t buffer_addr_info; /* %HAL_CE_DEST_DESC_ADDR_INFO_ */
+} __attribute__((__packed__));
+
+/* ce dst status 内容*/
+struct hal_ce_srng_dst_status_desc
+{
+    uint32_t flags; /* %HAL_CE_DST_STATUS_DESC_FLAGS_ */
+    uint32_t toeplitz_hash0;
+    uint32_t toeplitz_hash1;
+    uint32_t meta_info; /* HAL_CE_DST_STATUS_DESC_META_INFO_ */
+} __attribute__((__packed__));
 
 /* 驱动下发至设备的数据 */
 struct hal_test_dst{
@@ -122,6 +147,11 @@ struct hal_test_dst_status{
     uint32_t buffer_length;
     uint32_t flag;
 }__attribute__((__packed__));
+
+/* 对 dst ring 的处理 
+ * dst_ring 本身是 src_ring 
+ * 存储 paddr */
+void ce_dst_ring_handler(void *user_data);
 
 /* 对ce进行初始化
  *

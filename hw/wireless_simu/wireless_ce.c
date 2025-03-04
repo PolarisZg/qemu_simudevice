@@ -1,6 +1,6 @@
 #include "wireless_simu.h"
 
-static const struct srng_test_attr ce_ring_configs[] = {
+static const struct ce_attr ce_ring_configs[] = {
     {
         .flags = 0,
         .dest_nentries = 32,
@@ -9,17 +9,17 @@ static const struct srng_test_attr ce_ring_configs[] = {
     },
 };
 
-static struct srng_test_ring *hal_srng_alloc_ring(struct wireless_simu_device_state *wd, int nentries, int desc_sz)
+static struct wireless_simu_ce_ring *hal_srng_alloc_ring(struct wireless_simu_device_state *wd, int nentries, int desc_sz)
 {
-    struct srng_test_ring *ring;
-    size_t size = sizeof(struct srng_test_ring) + sizeof(struct sk_buff) * nentries;
+    struct wireless_simu_ce_ring *ring;
+    size_t size = sizeof(struct wireless_simu_ce_ring) + sizeof(struct sk_buff) * nentries;
 
     ring = malloc(size);
     if (!ring)
         return NULL;
     memset(ring, 0, size);
 
-    ring->skb = (void *)ring + sizeof(struct srng_test_ring);
+    ring->skb = (void *)ring + sizeof(struct wireless_simu_ce_ring);
     ring->nentries = nentries;
     ring->nentries_mask = nentries - 1;
     ring->sw_index = 0;
@@ -31,9 +31,9 @@ static struct srng_test_ring *hal_srng_alloc_ring(struct wireless_simu_device_st
 static int ce_alloc_pipe(struct copy_engine *ce, int pipe_num)
 {
     int ret = 0;
-    struct srng_test_pipe *pipe = &ce->pipes[pipe_num];
-    const struct srng_test_attr *attr = &ce->host_config[pipe_num];
-    struct srng_test_ring *ring;
+    struct wireless_simu_ce_pipe *pipe = &ce->pipes[pipe_num];
+    const struct ce_attr *attr = &ce->host_config[pipe_num];
+    struct wireless_simu_ce_ring *ring;
     int nentries;
     int desc_sz;
 
@@ -78,13 +78,13 @@ static int ce_alloc_pipe(struct copy_engine *ce, int pipe_num)
     return ret;
 }
 
-static void ce_dst_ring_handler(void *user_data)
+void ce_dst_ring_handler(void *user_data)
 {
     // printf("%s : ce dst handler in \n", WIRELESS_SIMU_DEVICE_NAME);
 
-    struct srng_test_pipe *pipe = (struct srng_test_pipe *)user_data;
+    struct wireless_simu_ce_pipe *pipe = (struct wireless_simu_ce_pipe *)user_data;
     struct wireless_simu_device_state *wd = pipe->wd;
-    struct srng_test_ring *dst_ring = pipe->dst_ring;
+    struct wireless_simu_ce_ring *dst_ring = pipe->dst_ring;
     if (!dst_ring)
     {
         printf("%s : ce dst ring no dst \n", WIRELESS_SIMU_DEVICE_NAME);
@@ -122,13 +122,13 @@ static void ce_dst_ring_handler(void *user_data)
     return;
 }
 
-static int ce_init_ring(struct srng_test_pipe *pipe, struct srng_test_ring *ring, int id, enum hal_ring_type type)
+static int ce_init_ring(struct wireless_simu_ce_pipe *pipe, struct wireless_simu_ce_ring *ring, int id, enum hal_ring_type type)
 {
     int ret = 0;
     struct hal_srng_params params = {0};
 
     // 填充params
-    params.hal_srng_handler = ce_dst_ring_handler;
+    // params.hal_srng_handler = ce_dst_ring_handler;
     params.user_data = (void *)pipe;
 
     ret = wireless_hal_srng_setup(pipe->wd, type, id, 0, &params);
@@ -150,7 +150,7 @@ int wireless_simu_ce_init(struct wireless_simu_device_state *wd)
 
     int ret = 0;
     struct copy_engine *ce;
-    struct srng_test_pipe *pipe;
+    struct wireless_simu_ce_pipe *pipe;
     wd->ce_count_num = WIRELESS_SIMU_CE_COUNT;
 
     for (int ce_num = 0; ce_num < wd->ce_count_num; ce_num++)
@@ -161,7 +161,7 @@ int wireless_simu_ce_init(struct wireless_simu_device_state *wd)
 
         ce->host_config = ce_ring_configs; // todo : 这个应该使用复制操作，一定要改
 
-        pthread_mutex_init(&ce->srng_test_lock, NULL);
+        pthread_mutex_init(&ce->ce_lock, NULL);
 
         for (int pipe_num = 0; pipe_num < ce->pipes_count; pipe_num++)
         {
@@ -197,11 +197,11 @@ int wireless_simu_ce_init(struct wireless_simu_device_state *wd)
 void wireless_simu_ce_post_data(struct wireless_simu_device_state *wd, void *data, size_t data_size)
 {
     struct copy_engine *ce;
-    struct srng_test_pipe *pipe;
+    struct wireless_simu_ce_pipe *pipe;
     unsigned int sw_index;
     unsigned int write_index;
-    struct srng_test_ring *dst_ring;
-    struct srng_test_ring *status_ring;
+    struct wireless_simu_ce_ring *dst_ring;
+    struct wireless_simu_ce_ring *status_ring;
     struct sk_buff *skb;
     struct hal_srng *status_srng;
     dma_addr_t data_paddr;
@@ -210,7 +210,7 @@ void wireless_simu_ce_post_data(struct wireless_simu_device_state *wd, void *dat
     for (int ce_num = 0; ce_num < wd->ce_count_num; ce_num++)
     {
         ce = &wd->ce_group[ce_num];
-        pthread_mutex_lock(&ce->srng_test_lock);
+        pthread_mutex_lock(&ce->ce_lock);
 
         for (int pipe_num = 0; pipe_num < ce->pipes_count; pipe_num++)
         {
@@ -270,12 +270,12 @@ void wireless_simu_ce_post_data(struct wireless_simu_device_state *wd, void *dat
                    status_srng->u.dst_ring.hp_paddr, (uint64_t)data_size);
 
             pthread_mutex_unlock(&pipe->pipe_lock);
-            pthread_mutex_unlock(&ce->srng_test_lock);
-            wireless_simu_irq_raise(&wd->ws_irq, WIRELESS_SIMU_IRQ_STATU_SRNG_DST_DMA_TEST_RING_0);
+            pthread_mutex_unlock(&ce->ce_lock);
+            wireless_simu_irq_raise(&wd->ws_irq, WIRELESS_SIMU_IRQ_STATU_SRNG_DST_DMA_TEST_RING_0 + pipe_num);
             goto end;
         }
 
-        pthread_mutex_unlock(&ce->srng_test_lock);
+        pthread_mutex_unlock(&ce->ce_lock);
     }
 
 end:

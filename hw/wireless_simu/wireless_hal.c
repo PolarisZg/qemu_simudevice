@@ -18,6 +18,7 @@ static const struct hal_srng_config hw_srng_config_template[] = {
         .lmac_ring = false,
         .ring_dir = HAL_SRNG_DIR_SRC,
         .max_size = HAL_TEST_SW2HW_SIZE,
+        .hal_srng_handler = ce_dst_ring_handler,
     },
     {
         /* HAL_TEST_SRNG_DST_STATUS 和上一个ring配套使用*/
@@ -27,6 +28,33 @@ static const struct hal_srng_config hw_srng_config_template[] = {
         .lmac_ring = false,
         .ring_dir = HAL_SRNG_DIR_DST,
         .max_size = HAL_TEST_SW2HW_SIZE,
+    },
+    {
+        /* CE_SRC */
+        .start_ring_id = HAL_SRNG_RING_ID_CE0_SRC,
+        .max_rings = 12,
+        .entry_size = sizeof(struct hal_ce_srng_src_desc) >> 2,
+        .lmac_ring = false,
+        .ring_dir = HAL_SRNG_DIR_SRC,
+        .max_size = HAL_CE_SRC_RING_BASE_MSB_RING_SIZE,
+    },
+    {
+        /* CE_DST */
+        .start_ring_id = HAL_SRNG_RING_ID_CE0_DST,
+        .max_rings = 12,
+        .entry_size = sizeof(struct hal_ce_srng_dest_desc) >> 2,
+        .lmac_ring = false,
+        .ring_dir = HAL_SRNG_DIR_SRC,
+        .max_size = HAL_CE_DST_RING_BASE_MSB_RING_SIZE,
+    },
+    {
+        /* CE_DST_STATUS */
+        .start_ring_id = HAL_SRNG_RING_ID_CE0_DST_STATUS,
+        .max_rings = 12,
+        .entry_size = sizeof(struct hal_ce_srng_dst_status_desc) >> 2,
+        .lmac_ring = false,
+        .ring_dir = HAL_SRNG_DIR_DST,
+        .max_size = HAL_CE_DST_STATUS_RING_BASE_MSB_RING_SIZE,
     },
 };
 
@@ -47,6 +75,15 @@ static void wireless_simu_hal_srng_dir_set(int ring_id, struct hal_srng *srng)
         break;
     case HAL_SRNG_RING_ID_TEST_DST ... HAL_SRNG_RING_ID_TEST_DST + 6:
         srng->ring_dir = HAL_SRNG_DIR_SRC;
+        break;
+    case HAL_SRNG_RING_ID_CE0_SRC ... HAL_SRNG_RING_ID_CE0_SRC + 11:
+        srng->ring_dir = HAL_SRNG_DIR_SRC;
+        break;
+    case HAL_SRNG_RING_ID_CE0_DST ... HAL_SRNG_RING_ID_CE0_DST + 11:
+        srng->ring_dir = HAL_SRNG_DIR_SRC;
+        break;
+    case HAL_SRNG_RING_ID_CE0_DST_STATUS ... HAL_SRNG_RING_ID_CE0_DST_STATUS + 11:
+        srng->ring_dir = HAL_SRNG_DIR_DST;
         break;
     default:
         printf("%s : ring id %d err \n", WIRELESS_SIMU_DEVICE_NAME, ring_id);
@@ -249,6 +286,81 @@ static int desc_hal_test_sw2hw_handle(struct wireless_simu_device_state *wd, voi
     return 0;
 }
 
+static int hal_srng_ring_ce_src_wmi_handler(struct wireless_simu_device_state *wd, void *desc)
+{
+    struct hal_ce_srng_src_desc *ce_src_desc = (struct hal_ce_srng_src_desc *)desc;
+
+    /* -- ce ring 数据帧 -- */
+    dma_addr_t data_paddr = ce_src_desc->buffer_addr_low | ((uint64_t)(ce_src_desc->buffer_addr_info & 0xff) << 32);
+    uint32_t data_size = ((ce_src_desc->buffer_addr_info & 0xffff0000) >> 16);
+    printf("%s : ce srng src desc data %016lx paddr %08x size %08x flag \n", WIRELESS_SIMU_DEVICE_NAME, data_paddr, data_size, ce_src_desc->flags);
+
+    /* -- 从 ce ring 中抽取 skb */
+    void *data = (void *)get_desc_from_mem(&wd->parent_obj, data_paddr, data_size);
+    if (!data)
+        return -EIO;
+
+    /* -- skb 中 头部先是 htc 部分 */
+    struct wireless_htc_hdr *htc_hdr = (struct wireless_htc_hdr *)data;
+    uint32_t skb_len_no_htc = (htc_hdr->htc_info & 0xffff0000) >> 16;
+    printf("%s : ce srng src htc skb_len_no_htc %08x \n", WIRELESS_SIMU_DEVICE_NAME, skb_len_no_htc);
+
+    /* -- htc 后面是 wmi_cmd 部分 */
+    struct wmi_cmd_hdr *wmi_hdr = (struct wmi_cmd_hdr *)((void *)data + sizeof(struct wireless_htc_hdr));
+    uint32_t wmi_cmd = wmi_hdr->cmd_id;
+    printf("%s : ce srng src wmi cmd %08x \n", WIRELESS_SIMU_DEVICE_NAME, wmi_cmd);
+
+    switch (wmi_cmd)
+    {
+    case WMI_MGMT_TX_SEND_CMDID:
+        printf("%s : ce srng src wmi_mgmt_send_cmd \n", WIRELESS_SIMU_DEVICE_NAME);
+        struct wmi_mgmt_send_cmd *cmd = (struct wmi_mgmt_send_cmd *)((void *)wmi_hdr + sizeof(struct wmi_cmd_hdr));
+        wireless_simu_wmi_mgmt_send(wd, cmd);
+        break;
+    }
+
+    free(data);
+    return 0;
+}
+
+static int hal_srng_ring_ce_src_handler_default(struct wireless_simu_device_state *wd, void *desc, int ce_id)
+{
+    int ret = 0;
+
+    printf("%s : this is openwifi tx code ce_id %d \n", WIRELESS_SIMU_DEVICE_NAME, ce_id);
+    struct hal_ce_srng_src_desc *ce_src_desc = (struct hal_ce_srng_src_desc *)desc;
+    dma_addr_t data_paddr = ce_src_desc->buffer_addr_low | ((uint64_t)(ce_src_desc->buffer_addr_info & 0xff) << 32);
+    uint32_t data_size = ((ce_src_desc->buffer_addr_info & 0xffff0000) >> 16);
+
+    /* -- 从 ce ring 中抽取 skb */
+    void *data = (void *)get_desc_from_mem(&wd->parent_obj, data_paddr, data_size);
+    if (!data)
+        return -EIO;
+
+    printf("%s : ce srng src desc data %016lx paddr %08x size %08x flag \n", WIRELESS_SIMU_DEVICE_NAME, data_paddr, data_size, ce_src_desc->flags);
+
+    wireless_simu_openwifi_mgmt_send(wd, data, data_size);
+
+    free(data);
+
+    return ret;
+}
+
+static int hal_srng_ring_ce_src_handler(struct wireless_simu_device_state *wd, void *desc, int ce_id)
+{
+    int ret = 0;
+    switch (ce_id)
+    {
+    case 0:
+        ret = hal_srng_ring_ce_src_wmi_handler(wd, desc);
+        break;
+    default:
+        ret = hal_srng_ring_ce_src_handler_default(wd, desc, ce_id);
+    }
+
+    return ret;
+}
+
 void wireless_hal_src_ring_tp(gpointer data, gpointer user_data)
 {
     /* 该函数中所有的 << 2 和 >> 2 都是为了去对driver中定义的以 32bit 为单位去计算的数据长度等参数 */
@@ -312,7 +424,14 @@ void wireless_hal_src_ring_tp(gpointer data, gpointer user_data)
         case HAL_SRNG_RING_ID_TEST_DST:
             // ret = desc_hal_test_dst_handle(wd, desc);
             break;
-
+        case HAL_SRNG_RING_ID_CE0_SRC ... HAL_SRNG_RING_ID_CE0_SRC + 11:
+            // 这里暂时应该只会发送一些mgmt数据, 所以简单把数据抽出来
+            hal_srng_ring_ce_src_handler(wd, desc, srng->ring_id - HAL_SRNG_RING_ID_CE0_SRC);
+            // 把写ring_buffer的 tp 放在前面, 就能保证中断发出去之前就已经写好数据了
+            pci_dma_write(&wd->parent_obj, srng->u.src_ring.tp_paddr, &srng->u.src_ring.tp, sizeof(srng->u.src_ring.tp));
+            /* send 完毕, 该使用中断去通知驱动 */
+            wireless_simu_irq_raise(&wd->ws_irq, WIRELESS_SIMU_IRQ_STATUS_MGMT_TX_END + srng->ring_id - HAL_SRNG_RING_ID_CE0_SRC);
+            break;
         default:
             break;
         }
@@ -349,7 +468,8 @@ int wireless_hal_srng_setup(struct wireless_simu_device_state *wd,
 
     srng = &wd->hal.srng_list[ret];
 
-    srng->hal_srng_handler = params->hal_srng_handler;
+    if (hw_srng_config_template[type].hal_srng_handler)
+        srng->hal_srng_handler = hw_srng_config_template[type].hal_srng_handler;
     srng->user_data = params->user_data;
 
     /* 和驱动中不一样，qemu设备中很多srng的参数需要等待驱动端的写寄存器配置 */

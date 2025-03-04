@@ -18,6 +18,7 @@
 #include "wireless_ce.h"
 #include "wireless_sk_buff.h"
 #include "wireless_num.h"
+#include "wireless_wmi.h"
 
 #define WIRELESS_SIMU_DEVICE_NAME "wirelesssimu"
 #define WIRELESS_SIMU_DEVICE_DMA_MASK 32

@@ -383,7 +383,9 @@ void wireless_hal_src_ring_tp(gpointer data, gpointer user_data)
     printf("%s : src ring id %d no srng handler \n", WIRELESS_SIMU_DEVICE_NAME, srng->ring_id);
 
     // 对srng加锁
-    qemu_mutex_lock(&srng->lock);
+    if(!qemu_mutex_trylock(&srng->lock))
+        return;
+    // qemu_mutex_lock(&srng->lock);
 
     if (srng->wd != wd)
     {

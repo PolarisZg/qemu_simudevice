@@ -27,7 +27,7 @@ static void wireless_simu_realize(struct PCIDevice *pci_dev, struct Error **errp
     wireless_simu_irq_init(&wd->ws_irq, &wd->parent_obj, HAL_BASIC_REG(WIRELESS_REG_BASIC_IRQ_STATUS));
 
     /* srng_handler init */
-    wd->hal_srng_handle_pool = g_thread_pool_new(wireless_hal_src_ring_tp, (void *)wd, -1, FALSE, &wd->hal_srng_handle_err);
+    wd->hal_srng_handle_pool = g_thread_pool_new(wireless_hal_src_ring_tp, (void *)wd, 20, FALSE, &wd->hal_srng_handle_err);
     if(!wd->hal_srng_handle_pool){
         printf("%s : srng thread pool init err \n", WIRELESS_SIMU_DEVICE_NAME);
         exit(-1);

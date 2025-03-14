@@ -1,5 +1,9 @@
 {
     "C_Cpp.errorSquiggles": "disabled",
+    "files.associations": {
+        "glib.h": "c",
+        "wireless_txrx.h": "c"
+    },
     // "files.associations": {
     //     "pci.h": "c",
     //     "error.h": "c"

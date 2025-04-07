@@ -1309,5 +1309,5 @@ int wireless_simu_wmi_mgmt_send(struct wireless_simu_device_state *wd, struct wm
 
 int wireless_simu_openwifi_mgmt_send(struct wireless_simu_device_state *wd, void* data, size_t len);
 
-
+void wireless_simu_openwifi_mgmt_receive(void* data, size_t len, void* device);
 #endif /* WIRELESS_SIMU_WMI */

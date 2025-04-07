@@ -6,7 +6,8 @@ wireless_simu_ss.add(files(
   'wireless_irq.c',
   'wireless_ce.c',
   'wireless_sk_buff.c',
-  'wireless_wmi.c'
+  'wireless_wmi.c',
+  'wireless_txrx.c'
 ))
 
 system_ss.add_all(when: 'CONFIG_WIRELESS_SIMU', if_true: wireless_simu_ss)

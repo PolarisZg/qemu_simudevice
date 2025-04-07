@@ -33,6 +33,9 @@ static void wireless_simu_realize(struct PCIDevice *pci_dev, struct Error **errp
         exit(-1);
     }
 
+    // txrx 初始化
+    wireless_txrx_init(wireless_simu_openwifi_mgmt_receive, wd);
+
     /* mmio reg 初始化 */
     memory_region_init_io(&wd->mmio,
                           OBJECT(wd),
@@ -51,6 +54,8 @@ static void wireless_simu_exit(struct PCIDevice *pci_dev)
 {
     struct wireless_simu_device_state *wd = WIRELESS_SIMU_OBJ(pci_dev);
     wd->dma_mask = 0;
+
+    wireless_txrx_deinit();
 
     // deinit irq
     wireless_simu_irq_deinit(&wd->ws_irq);

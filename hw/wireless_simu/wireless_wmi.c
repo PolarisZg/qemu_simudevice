@@ -52,7 +52,17 @@ int wireless_simu_wmi_mgmt_send(struct wireless_simu_device_state *wd, struct wm
 int wireless_simu_openwifi_mgmt_send(struct wireless_simu_device_state *wd, void* data, size_t len){
     int ret = 0;
 
-    print_hex_dump("openwifi skb", data, len);
+    // 帧发送
+    wireless_tx_data(data, len);
+    // print_hex_dump("openwifi skb", data, len);
 
     return ret;
+}
+
+void wireless_simu_openwifi_mgmt_receive(void* data, size_t len, void* device){
+    struct wireless_simu_device_state *wd = (struct wireless_simu_device_state *)device;
+
+    printf("%s : socket reveive handler \n", WIRELESS_SIMU_DEVICE_NAME);
+
+    wireless_simu_ce_post_data(wd, data, len);
 }

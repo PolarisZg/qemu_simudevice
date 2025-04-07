@@ -2,7 +2,9 @@
     "C_Cpp.errorSquiggles": "disabled",
     "files.associations": {
         "glib.h": "c",
-        "wireless_txrx.h": "c"
+        "wireless_txrx.h": "c",
+        "string.h": "c",
+        "wireless_simu.h": "c"
     },
     // "files.associations": {
     //     "pci.h": "c",

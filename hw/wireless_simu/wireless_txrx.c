@@ -1,7 +1,11 @@
-#include "wireless_txrx.h"
-#include <glib-2.0/glib.h>
 
+#ifdef DEBUG
+#include "wireless_txrx.h"
 static int pid = 0;
+#else
+#include "wireless_simu.h"
+#endif /* DEBUG */
+
 #define SERVER_ADDR "127.0.0.1"
 #define SERVER_PORT_1 12700
 #define SERVER_PORT_2 12701
@@ -17,7 +21,7 @@ static pthread_t rx_thread;
 GThreadPool *rx_thread_pool = NULL;
 #define RX_BUFFER_SIZE 2048
 static char rx_buffer[RX_BUFFER_SIZE];
-static void (*rx_handler)(void *data, size_t len) = NULL;
+static void (*rx_handler)(void *data, size_t len, void* device) = NULL;
 
 static int bind_rx_port(int port, int *sock_fd)
 {
@@ -34,7 +38,7 @@ static int bind_rx_port(int port, int *sock_fd)
     return 0;
 }
 
-static int bind_tx_port(char *addr, int port, struct sockaddr_in *server_addr)
+static int bind_tx_port(const char *addr, int port, struct sockaddr_in *server_addr)
 {
     if (server_addr == NULL)
         return -2;
@@ -46,7 +50,7 @@ static int bind_tx_port(char *addr, int port, struct sockaddr_in *server_addr)
     return 0;
 }
 
-static int init_txrx_fd()
+static int init_txrx_fd(void)
 {
     sockfd_tx = socket(AF_INET, SOCK_DGRAM, 0);
     sockfd_rx = socket(AF_INET, SOCK_DGRAM, 0);
@@ -56,8 +60,6 @@ static int init_txrx_fd()
         printf("%s : init fd tx %d rx %d err \n", WIRELESS_SIMU_DEVICE_NAME, sockfd_tx, sockfd_rx);
         exit(1);
     }
-
-    printf("%s : tx rx port %d %d \n", WIRELESS_SIMU_DEVICE_NAME, SERVER_PORT_1, SERVER_PORT_2);
     
     if (bind_rx_port(SERVER_PORT_1, &sockfd_rx) == 0)
     {
@@ -66,6 +68,7 @@ static int init_txrx_fd()
             printf("%s : init fd bind err \n", WIRELESS_SIMU_DEVICE_NAME);
             exit(1);
         }
+        printf("%s : tx rx port %d %d \n", WIRELESS_SIMU_DEVICE_NAME, SERVER_PORT_2, SERVER_PORT_1);
     }
     else
     {
@@ -74,6 +77,7 @@ static int init_txrx_fd()
             printf("%s : init fd bind this device num overflow 2 \n", WIRELESS_SIMU_DEVICE_NAME);
             exit(1);
         }
+        printf("%s : tx rx port %d %d \n", WIRELESS_SIMU_DEVICE_NAME, SERVER_PORT_1, SERVER_PORT_2);
     }
 
     return 0;
@@ -120,14 +124,14 @@ END:
     return ret;
 }
 
-typedef struct rx_data_packet
+typedef struct rx_data_packet_define
 {
     size_t len;
     void *data;
 } rx_data_packet;
 
 /* 单开一个线程去监听, 所以不需要去考虑阻塞的问题 */
-static void *wireless_rx_data(void *data)
+static void *wireless_rx_data(void *p_data)
 {
     while (!rx_stop)
     {
@@ -171,7 +175,7 @@ static void wireless_rx_data_handler_task(gpointer data, gpointer user_data)
 
     // 对接收到的数据进行处理 这里选择打印一下
     if(rx_handler){
-        rx_handler(skb->data, skb->len);
+        rx_handler(skb->data, skb->len, user_data);
     }
 
     free(skb->data);
@@ -180,7 +184,7 @@ static void wireless_rx_data_handler_task(gpointer data, gpointer user_data)
     free(skb);
 }
 
-int wireless_txrx_init(void (*rx_data_handler)(void* data, size_t len))
+int wireless_txrx_init(void (*rx_data_handler)(void* data, size_t len, void* device), void* device)
 {
     g_mutex_init(&tx_lock);
 
@@ -191,13 +195,15 @@ int wireless_txrx_init(void (*rx_data_handler)(void* data, size_t len))
     rx_handler = rx_data_handler;
 
     // rx 单独一个线程去处理
-    rx_thread_pool = g_thread_pool_new(wireless_rx_data_handler_task, NULL, 20, FALSE, NULL);
+    rx_thread_pool = g_thread_pool_new(wireless_rx_data_handler_task, device, 20, FALSE, NULL);
 
     rx_stop = false;
     pthread_create(&rx_thread, NULL, &wireless_rx_data, NULL);
+
+    return 0;
 }
 
-void wireless_txrx_deinit()
+void wireless_txrx_deinit(void)
 {
     tx_stop = true;
     rx_stop = true;
@@ -210,12 +216,17 @@ void wireless_txrx_deinit()
 }
 
 #ifdef DEBUG
-void test_rx_handler(void *data, size_t len)
+void test_rx_handler(void *data, size_t len, void* device)
 {
     fprintf(stdout, "%s : from %d : tail 3 char %c %c %c len %ld \n", WIRELESS_SIMU_DEVICE_NAME,
             *(int *)data,
             *(char *)(data + len - 3), *(char *)(data + len - 2), *(char *)(data + len - 1),
             len);
+}
+
+void handle_sigint(int sig) {
+    wireless_txrx_deinit();
+    exit(0);
 }
 
 int main()
@@ -224,21 +235,27 @@ int main()
     WIRELESS_SIMU_DEVICE_NAME = (char *)malloc(30);
     sprintf(WIRELESS_SIMU_DEVICE_NAME, "%s %d", "wireless_txrx_test", getpid());
 
-    wireless_txrx_init(test_rx_handler);
+    wireless_txrx_init(test_rx_handler, NULL);
 
-    for (int i = 0; i < 65535; i++)
-    {
-        size_t len = i * 23 + 7;
-        int *data = (int *)malloc(len);
-        memset(data, 0x12345678, len);
-        *data = getpid();
-        wireless_tx_data((void *)data, len);
-        // sleep(1);
-        free(data);
+    // for (int i = 0; i < 65535; i++)
+    // {
+    //     size_t len = i * 23 + 7;
+    //     int *data = (int *)malloc(len);
+    //     memset(data, 0x12345678, len);
+    //     *data = getpid();
+    //     wireless_tx_data((void *)data, len);
+    //     // sleep(1);
+    //     free(data);
+    // }
+
+    if(signal(SIGINT, handle_sigint) == SIG_ERR) {
+        perror("signal");
+        wireless_txrx_deinit();
+        return 1;
     }
 
-    wireless_txrx_deinit();
-
+    while(1){}
+    
     return 0;
 }
 #endif /* DEBUG */

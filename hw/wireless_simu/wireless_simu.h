@@ -1,6 +1,15 @@
 #ifndef WIRELESS_SIMU_MAIN
 #define WIRELESS_SIMU_MAIN
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <arpa/inet.h>
+#include <pthread.h>
+
 #include "qemu/osdep.h"
 #include "qemu/units.h"
 #include "hw/pci/pci.h"
@@ -19,6 +28,7 @@
 #include "wireless_sk_buff.h"
 #include "wireless_num.h"
 #include "wireless_wmi.h"
+#include "wireless_txrx.h"
 
 #define WIRELESS_SIMU_DEVICE_NAME "wirelesssimu"
 #define WIRELESS_SIMU_DEVICE_DMA_MASK 32
